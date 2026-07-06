@@ -39,8 +39,15 @@ prototype.html  legacy 2D canvas playground
 
 ## Roadmap
 
-- Issue #2: fans, vent hoses, multiple emitters
-- Issue #3: collection surfaces, wettability, radiative cooling
-- Issue #4: day/night cycle, ambient presets
+See the full list of open issues: https://github.com/ford442/wind_manager/issues
+
+Key upcoming work includes:
+- Direct canvas interaction for the emitter (point the hose)
+- Velocity-driven grass, swaying trees, houses/flags, and clouds
+- Multiple emitters + pure air gust sources
+- Droplet-ground interaction and surface effects
+- Presets, advanced controls, performance, visualization improvements, and more
+
+The original garden-hose downdraft observation is the north star.
 
 Let's make the invisible visible and play with the forces that move the world.
