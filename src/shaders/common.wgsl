@@ -13,9 +13,14 @@ const DV_H2O  : f32 = 2.5e-5;
 const SC_AIR  : f32 = 0.6;
 const R_KILL  : f32 = 2.0e-6;
 
-const SCALE_Q : f32 = 1.0e10;
-const SCALE_T : f32 = 1.0e7;
-const SCALE_M : f32 = 1.0e8;
+const SCALE_Q   : f32 = 1.0e10;
+const SCALE_T   : f32 = 1.0e7;
+const SCALE_M   : f32 = 1.0e8;
+const SCALE_WET : f32 = 1.0e8;
+
+const GROUND_SPLASH : f32 = 0.22;
+const GROUND_TEMP   : f32 = 0.12;
+const WET_DECAY     : f32 = 0.85;
 
 struct Params {
   nx          : u32,
@@ -32,6 +37,7 @@ struct Params {
   emit_spread : f32,
   emit_speed  : f32,
   emit_count  : u32,
+  emit_type   : u32,
   r_min       : f32,
   r_max       : f32,
   max_droplets: u32,
@@ -45,6 +51,15 @@ struct Droplet {
   vel    : vec2f,
   radius : f32,
   alive  : u32,
+};
+
+struct Tracer {
+  pos       : vec2f,
+  prev_pos  : vec2f,
+  age       : f32,
+  alive     : u32,
+  tint      : f32,
+  _pad      : f32,
 };
 
 struct Bilin {
@@ -91,4 +106,17 @@ fn bilin_at(pos: vec2f, h: f32, nx: i32, ny: i32) -> Bilin {
   b.fx = gx - f32(i0);
   b.fy = gy - f32(j0);
   return b;
+}
+
+fn sample_vel(pos: vec2f, h: f32, nx: i32, ny: i32, vel: ptr<storage, array<vec2f>, read>) -> vec2f {
+  let b = bilin_at(pos, h, nx, ny);
+  let k00 = cell_index(b.i0, b.j0, nx);
+  let k10 = cell_index(b.i1, b.j0, nx);
+  let k01 = cell_index(b.i0, b.j1, nx);
+  let k11 = cell_index(b.i1, b.j1, nx);
+  return mix(
+    mix((*vel)[k00], (*vel)[k10], b.fx),
+    mix((*vel)[k01], (*vel)[k11], b.fx),
+    b.fy,
+  );
 }

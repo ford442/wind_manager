@@ -1,3 +1,6 @@
+import type { Emitter } from './emitters';
+import { defaultEmitters } from './emitters';
+
 export interface Params {
   nx: number;
   ny: number;
@@ -12,14 +15,9 @@ export interface Params {
 
   latentOn: boolean;
 
-  emitX: number;
-  emitY: number;
-  emitAngleDeg: number;
-  emitSpreadDeg: number;
-  emitSpeed: number;
-  emitRate: number;
-  rMinUm: number;
-  rMaxUm: number;
+  emitters: Emitter[];
+  selectedEmitterId: string | null;
+
   maxDroplets: number;
 
   relax: number;
@@ -29,6 +27,22 @@ export interface Params {
   overlay: number;
   showArrows: boolean;
   showDroplets: boolean;
+
+  showTracers: boolean;
+  showTracerStreaks: boolean;
+  tracerDensity: number;
+  tracerLifetime: number;
+
+  showGrass: boolean;
+  grassDensity: number;
+  grassStiffness: number;
+
+  showTrees: boolean;
+
+  showHouses: boolean;
+  showClouds: boolean;
+  showGroundMist: boolean;
+  showWetGround: boolean;
 }
 
 export function qSat(tC: number): number {
@@ -38,11 +52,13 @@ export function qSat(tC: number): number {
 }
 
 export function defaultParams(): Params {
+  const domainW = 32.0;
+  const emitters = defaultEmitters(domainW);
   return {
-    nx: 256,
-    ny: 192,
-    domainW: 8.0,
-    domainH: 6.0,
+    nx: 512,
+    ny: 128,
+    domainW,
+    domainH: 8.0,
     dt: 1 / 120,
     substeps: 2,
     jacobiIters: 30,
@@ -52,14 +68,9 @@ export function defaultParams(): Params {
 
     latentOn: true,
 
-    emitX: 4.0,
-    emitY: 0.3,
-    emitAngleDeg: 0,
-    emitSpreadDeg: 15,
-    emitSpeed: 10.0,
-    emitRate: 6000,
-    rMinUm: 50,
-    rMaxUm: 800,
+    emitters,
+    selectedEmitterId: emitters[0]?.id ?? null,
+
     maxDroplets: 200000,
 
     relax: 1 / 120,
@@ -69,6 +80,22 @@ export function defaultParams(): Params {
     overlay: 2,
     showArrows: true,
     showDroplets: true,
+
+    showTracers: true,
+    showTracerStreaks: true,
+    tracerDensity: 4500,
+    tracerLifetime: 10,
+
+    showGrass: true,
+    grassDensity: 120,
+    grassStiffness: 0.72,
+
+    showTrees: true,
+
+    showHouses: true,
+    showClouds: true,
+    showGroundMist: true,
+    showWetGround: true,
   };
 }
 

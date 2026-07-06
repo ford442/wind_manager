@@ -7,6 +7,7 @@
 @group(0) @binding(6) var<storage, read_write> acc_q : array<atomic<i32>>;
 @group(0) @binding(7) var<storage, read_write> acc_t : array<atomic<i32>>;
 @group(0) @binding(8) var<storage, read_write> acc_m : array<atomic<i32>>;
+@group(0) @binding(9) var<storage, read_write> acc_wet : array<atomic<i32>>;
 
 fn fixed_pt(v: f32) -> i32 {
   return i32(clamp(round(v), -2.0e9, 2.0e9));
@@ -17,6 +18,26 @@ fn deposit(k: i32, w: f32, dq: f32, dtemp: f32, dvel: vec2f) {
   atomicAdd(&acc_t[k], fixed_pt(w * dtemp * SCALE_T));
   atomicAdd(&acc_m[2 * k], fixed_pt(w * dvel.x * SCALE_M));
   atomicAdd(&acc_m[2 * k + 1], fixed_pt(w * dvel.y * SCALE_M));
+}
+
+fn deposit_m(k: i32, w: f32, dvel: vec2f) {
+  atomicAdd(&acc_m[2 * k], fixed_pt(w * dvel.x * SCALE_M));
+  atomicAdd(&acc_m[2 * k + 1], fixed_pt(w * dvel.y * SCALE_M));
+}
+
+fn deposit_wet(i: i32, w: f32, amount: f32) {
+  atomicAdd(&acc_wet[i], fixed_pt(w * amount * SCALE_WET));
+}
+
+fn deposit_ground(
+  i: i32, nx: i32, w: f32,
+  dq: f32, dtemp: f32, dvel_h: vec2f, wet_amt: f32,
+) {
+  let k0 = cell_index(i, 0, nx);
+  deposit(k0, w, dq, dtemp, dvel_h);
+  let k1 = cell_index(i, 1, nx);
+  deposit(k1, w * 0.4, dq * 0.4, dtemp * 0.4, dvel_h * 0.4);
+  deposit_wet(i, w, wet_amt);
 }
 
 @compute @workgroup_size(64)
@@ -99,10 +120,66 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
   d.vel = vel_new;
   d.pos = d.pos + vel_new * P.dt;
   d.radius = r_new;
-  let w = f32(nx) * P.h;
+
+  let dom_w = f32(nx) * P.h;
   let ht = f32(ny) * P.h;
-  if (r_new < R_KILL || d.pos.y <= 0.0 || d.pos.y >= ht || d.pos.x <= 0.0 || d.pos.x >= w) {
+  let oob = d.pos.y >= ht || d.pos.x <= 0.0 || d.pos.x >= dom_w;
+
+  if (d.pos.y <= 0.0) {
+    let m_liquid = RHO_W * (4.0 / 3.0) * PI * r_new * r_new * r_new;
+    if (m_liquid > 1.0e-15) {
+      let dq_g = m_liquid / mcell;
+      var dtemp_g = 0.0;
+      if (P.latent_on > 0.5) {
+        dtemp_g = -(L_VAP * m_liquid * GROUND_TEMP) / (mcell * CP_AIR);
+      }
+      let splash = vec2f(vel_new.x * GROUND_SPLASH, 0.0);
+      let wet_amt = clamp(dq_g / 2.0e-4, 0.02, 0.55);
+
+      let gx = clamp(d.pos.x / P.h - 0.5, 0.0, f32(nx - 1) - 1.0e-4);
+      let i0 = i32(floor(gx));
+      let i1 = min(i0 + 1, nx - 1);
+      let fx = gx - f32(i0);
+      deposit_ground(i0, nx, 1.0 - fx, dq_g, dtemp_g, splash * (1.0 - fx), wet_amt * (1.0 - fx));
+      deposit_ground(i1, nx, fx, dq_g, dtemp_g, splash * fx, wet_amt * fx);
+    }
+    d.alive = 0u;
+  } else if (r_new < R_KILL || oob) {
     d.alive = 0u;
   }
+
   drops[di] = d;
+}
+
+@compute @workgroup_size(64)
+// Pure momentum injection — no droplets, mass, humidity, or latent heat.
+fn air_inject(@builtin(global_invocation_id) gid: vec3u) {
+  if (gid.x >= P.emit_count) { return; }
+  var seed = pcg(P.seed ^ (gid.x * 0x9E3779B9u + 77u));
+
+  let a = P.emit_angle + (rand01(&seed) - 0.5) * 2.0 * P.emit_spread;
+  let dir = vec2f(sin(a), cos(a));
+  let speed = P.emit_speed * (0.75 + 0.5 * rand01(&seed));
+  let reach = 0.08 + rand01(&seed) * 0.38;
+  let jx = (rand01(&seed) - 0.5) * 0.05;
+  let jy = (rand01(&seed) - 0.5) * 0.05;
+  let pos = vec2f(P.emit_x + jx, P.emit_y + jy) + dir * reach;
+
+  let nx = i32(P.nx);
+  let ny = i32(P.ny);
+  let b = bilin_at(pos, P.h, nx, ny);
+  let k00 = cell_index(b.i0, b.j0, nx);
+  let k10 = cell_index(b.i1, b.j0, nx);
+  let k01 = cell_index(b.i0, b.j1, nx);
+  let k11 = cell_index(b.i1, b.j1, nx);
+
+  let impulse = dir * speed * 0.22;
+  let w00 = (1.0 - b.fx) * (1.0 - b.fy);
+  let w10 = b.fx * (1.0 - b.fy);
+  let w01 = (1.0 - b.fx) * b.fy;
+  let w11 = b.fx * b.fy;
+  deposit_m(k00, w00, impulse);
+  deposit_m(k10, w10, impulse);
+  deposit_m(k01, w01, impulse);
+  deposit_m(k11, w11, impulse);
 }

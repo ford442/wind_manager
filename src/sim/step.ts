@@ -1,6 +1,8 @@
 import { cellSize, qAmb, type Params } from './params';
+import type { Emitter } from './emitters';
 import type { Fields } from './fields';
 import type { Droplets } from './droplets';
+import type { TracerSystem } from './tracers';
 
 // Static shader imports via Vite (inlined at build/dev time)
 import commonSrc from '../shaders/common.wgsl?raw';
@@ -10,13 +12,14 @@ import advectSrc from '../shaders/advect.wgsl?raw';
 import buoyancySrc from '../shaders/buoyancy.wgsl?raw';
 import pressureSrc from '../shaders/pressure.wgsl?raw';
 
-const PARAM_BYTES = 80;
+const PARAM_BYTES = 84;
 
 export interface Sim {
   time: number;
   frame: number;
   getFields: () => Fields;
   rebuildBindGroups: () => void;
+  setFields: (f: Fields) => void;
   reset: (p: Params) => void;
   step: (p: Params) => void;
 }
@@ -25,6 +28,7 @@ export async function createSim(
   device: GPUDevice,
   fields: Fields,
   drops: Droplets,
+  tracers: TracerSystem | null,
   params: Params
 ): Promise<Sim> {
   // No more runtime fetch — sources are already strings
@@ -51,8 +55,10 @@ export async function createSim(
     });
 
   const emitPipe = pipe(modDrops, 'emit');
+  const airPipe = pipe(modDrops, 'air_inject');
   const updatePipe = pipe(modDrops, 'update');
   const applyPipe = pipe(modApply, 'apply');
+  const applyWetPipe = pipe(modApply, 'apply_wet');
   const advectPipe = pipe(modAdvect, 'advect');
   const buoyPipe = pipe(modBuoy, 'buoyancy');
   const boundPipe = pipe(modBuoy, 'boundaries');
@@ -69,8 +75,10 @@ export async function createSim(
   const dv = new DataView(paramData);
 
   let emitBG;
+  let airBG;
   let updateBG;
   let applyBG;
+  let applyWetBG;
   let advectBG;
   let buoyBG;
   let boundBG;
@@ -88,6 +96,13 @@ export async function createSim(
         { binding: 2, resource: { buffer: drops.counter } },
       ],
     });
+    airBG = device.createBindGroup({
+      layout: airPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: uniform } },
+        { binding: 8, resource: { buffer: fields.accM } },
+      ],
+    });
     updateBG = device.createBindGroup({
       layout: updatePipe.getBindGroupLayout(0),
       entries: [
@@ -99,6 +114,7 @@ export async function createSim(
         { binding: 6, resource: { buffer: fields.accQ } },
         { binding: 7, resource: { buffer: fields.accT } },
         { binding: 8, resource: { buffer: fields.accM } },
+        { binding: 9, resource: { buffer: fields.accWet } },
       ],
     });
     applyBG = device.createBindGroup({
@@ -111,6 +127,14 @@ export async function createSim(
         { binding: 4, resource: { buffer: fields.accQ } },
         { binding: 5, resource: { buffer: fields.accT } },
         { binding: 6, resource: { buffer: fields.accM } },
+      ],
+    });
+    applyWetBG = device.createBindGroup({
+      layout: applyWetPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: uniform } },
+        { binding: 7, resource: { buffer: fields.wet } },
+        { binding: 8, resource: { buffer: fields.accWet } },
       ],
     });
     advectBG = device.createBindGroup({
@@ -195,18 +219,19 @@ export async function createSim(
     rebuildBindGroups();
   }
 
-  function packParams(p, emitCount, seed, time) {
+  function packParams(p: Params, em: Emitter, emitCount: number, seed: number, time: number) {
     const h = cellSize(p);
     let o = 0;
     const u32 = (v) => { dv.setUint32(o, v >>> 0, true); o += 4; };
     const f32 = (v) => { dv.setFloat32(o, v, true); o += 4; };
     u32(p.nx); u32(p.ny); f32(h); f32(p.dt);
     f32(p.tAmb); f32(qAmb(p)); f32(p.latentOn ? 1 : 0); f32(time);
-    f32(p.emitX); f32(p.emitY);
-    f32((p.emitAngleDeg * Math.PI) / 180);
-    f32((p.emitSpreadDeg * Math.PI) / 180);
-    f32(p.emitSpeed); u32(emitCount);
-    f32(p.rMinUm * 1e-6); f32(p.rMaxUm * 1e-6);
+    f32(em.x); f32(em.y);
+    f32((em.angleDeg * Math.PI) / 180);
+    f32((em.spreadDeg * Math.PI) / 180);
+    f32(em.speed); u32(emitCount);
+    u32(em.type === 'air' ? 1 : 0);
+    f32(em.rMinUm * 1e-6); f32(em.rMaxUm * 1e-6);
     u32(p.maxDroplets); u32(seed); f32(p.relax); f32(p.damp);
   }
 
@@ -220,17 +245,24 @@ export async function createSim(
     Math.ceil(ny / sy),
   ];
 
-  function substep(p, emitCount) {
-    packParams(p, emitCount, seed++, time);
-    device.queue.writeBuffer(uniform, 0, paramData);
-
+  function substep(p: Params) {
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
 
-    if (emitCount > 0) {
-      pass.setPipeline(emitPipe);
-      pass.setBindGroup(0, emitBG);
-      pass.dispatchWorkgroups(wg(emitCount, 64));
+    for (const em of p.emitters) {
+      const count = Math.max(0, Math.round((em.rate * p.dt) / p.substeps));
+      if (count <= 0) continue;
+      packParams(p, em, count, seed++, time);
+      device.queue.writeBuffer(uniform, 0, paramData);
+      if (em.type === 'water') {
+        pass.setPipeline(emitPipe);
+        pass.setBindGroup(0, emitBG);
+        pass.dispatchWorkgroups(wg(count, 64));
+      } else {
+        pass.setPipeline(airPipe);
+        pass.setBindGroup(0, airBG);
+        pass.dispatchWorkgroups(wg(count, 64));
+      }
     }
 
     pass.setPipeline(updatePipe);
@@ -240,6 +272,10 @@ export async function createSim(
     pass.setPipeline(applyPipe);
     pass.setBindGroup(0, applyBG);
     pass.dispatchWorkgroups(wg(fields.n, 64));
+
+    pass.setPipeline(applyWetPipe);
+    pass.setBindGroup(0, applyWetBG);
+    pass.dispatchWorkgroups(wg(p.nx, 64));
 
     pass.setPipeline(advectPipe);
     pass.setBindGroup(0, advectBG);
@@ -282,6 +318,10 @@ export async function createSim(
     pass.end();
     device.queue.submit([enc.finish()]);
 
+    if (tracers && p.showTracers) {
+      tracers.step(device, fields.vel0, p, seed++);
+    }
+
     swapAdvectBuffers();
     time += p.dt;
   }
@@ -292,19 +332,27 @@ export async function createSim(
     getFields: () => fields,
     rebuildBindGroups,
 
+    setFields(f: Fields) {
+      fields = f;
+      rebuildBindGroups();
+    },
+
     reset(p) {
       time = 0;
       frame = 0;
       seed = 1;
       fields.reset(device.queue, p);
       drops.reset(device.queue);
+      tracers?.reset(device.queue);
       rebuildBindGroups();
+      if (tracers && p.showTracers) {
+        tracers.seedBurst(device, fields.vel0, p, seed++);
+      }
     },
 
     step(p) {
-      const emitPerSubstep = Math.max(0, Math.round(p.emitRate * p.dt));
       for (let s = 0; s < p.substeps; s++) {
-        substep(p, emitPerSubstep);
+        substep(p);
       }
       this.time = time;
       this.frame = ++frame;

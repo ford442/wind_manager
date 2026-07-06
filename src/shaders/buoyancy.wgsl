@@ -40,10 +40,16 @@ fn boundaries(@builtin(global_invocation_id) gid: vec3u) {
 
   if (i == 0) {
     let kk = cell_index(1, j, nx);
-    v = vel[kk]; t = tf[kk]; q = qf[kk];
+    v = vel[kk];
+    t = tf[kk];
+    q = qf[kk];
+    v.x *= 0.92;
   } else if (i == nx - 1) {
     let kk = cell_index(nx - 2, j, nx);
-    v = vel[kk]; t = tf[kk]; q = qf[kk];
+    v = vel[kk];
+    t = tf[kk];
+    q = qf[kk];
+    v.x *= 0.92;
   }
   if (j == ny - 1) {
     let kk = cell_index(i, ny - 2, nx);

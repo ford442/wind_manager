@@ -14,6 +14,8 @@ export interface Fields {
   accQ: GPUBuffer;
   accT: GPUBuffer;
   accM: GPUBuffer;
+  wet: GPUBuffer;
+  accWet: GPUBuffer;
   h: number;
   reset: (queue: GPUQueue, params: Params) => void;
 }
@@ -38,6 +40,8 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     accQ: mk(n * 4),
     accT: mk(n * 4),
     accM: mk(n * 8),
+    wet: mk(p.nx * 4),
+    accWet: mk(p.nx * 4),
   };
 
   f.reset = (queue: GPUQueue, params: Params) => {
@@ -57,6 +61,8 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     queue.writeBuffer(f.accQ, 0, new Int32Array(n));
     queue.writeBuffer(f.accT, 0, new Int32Array(n));
     queue.writeBuffer(f.accM, 0, new Int32Array(n * 2));
+    queue.writeBuffer(f.wet, 0, new Float32Array(p.nx));
+    queue.writeBuffer(f.accWet, 0, new Int32Array(p.nx));
   };
 
   f.h = cellSize(p);

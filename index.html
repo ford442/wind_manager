@@ -14,15 +14,24 @@
       margin: 0; padding: 16px; background: var(--bg); color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
     }
-    .wrap { max-width: 1360px; margin: 0 auto; }
+    .wrap { max-width: 1600px; margin: 0 auto; }
     header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
     h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
     header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
     .layout { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
     .canvas-col { flex: 1 1 640px; min-width: 320px; }
-    canvas {
-      display: block; width: 100%; aspect-ratio: 4 / 3; background: #060a0f;
-      border: 1px solid var(--border); border-radius: 12px;
+    .canvas-wrap {
+      position: relative; width: 100%; aspect-ratio: 4 / 1;
+      border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+      background: #060a0f;
+    }
+    .canvas-wrap canvas {
+      display: block; width: 100%; height: 100%;
+    }
+    #c { touch-action: none; }
+    #grass-overlay {
+      position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+      pointer-events: none;
     }
     .panel {
       width: 300px; flex: 0 0 300px; background: var(--panel);
@@ -51,6 +60,7 @@
     .stats .v { font-family: ui-monospace, monospace; text-align: right; }
     #nan-status { color: var(--good); }
     #nan-status.bad { color: var(--bad); font-weight: 700; }
+    .stats .v.bad { color: var(--bad); font-weight: 700; }
     #gpu-error {
       display: none; background: #2a1215; border: 1px solid #7f1d1d; color: #fecaca;
       border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px;
@@ -59,6 +69,33 @@
     a { color: var(--accent); }
     .checks { display: flex; gap: 14px; font-size: 12px; margin-top: 6px; }
     .checks label { display: flex; gap: 6px; align-items: center; }
+    #emitter-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; max-height: 140px; overflow-y: auto; }
+    .emitter-item {
+      text-align: left; width: 100%; padding: 5px 8px; font-size: 11px;
+      background: #17222f; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); cursor: pointer;
+    }
+    .emitter-item:hover { background: #1d2b3b; }
+    .emitter-item.active { border-color: var(--accent); color: var(--accent); }
+    #emitter-selected-info { font-size: 11px; color: var(--muted); margin-bottom: 8px; line-height: 1.4; }
+    select {
+      width: 100%; background: #17222f; color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 8px; font-size: 12px; margin-bottom: 8px;
+    }
+    #preset-hint { margin-top: 6px; margin-bottom: 0; }
+    details.advanced-section { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    details.advanced-section summary {
+      cursor: pointer; font-size: 11px; letter-spacing: 0.08em; color: var(--muted);
+      text-transform: uppercase; list-style: none;
+    }
+    details.advanced-section summary::-webkit-details-marker { display: none; }
+    details.advanced-section[open] summary { margin-bottom: 10px; color: var(--accent); }
+    .advanced-body .slider:last-of-type { margin-bottom: 6px; }
+    #advanced-warnings {
+      font-size: 11px; color: var(--muted); line-height: 1.45; white-space: pre-line;
+      min-height: 1.2em; margin: 8px 0;
+    }
+    #advanced-warnings.has-warn { color: #fbbf24; }
   </style>
 </head>
 <body>
@@ -77,16 +114,27 @@
 
     <div class="layout">
       <div class="canvas-col">
-        <canvas id="c" width="1024" height="768"></canvas>
+        <div class="canvas-wrap">
+          <canvas id="c" width="1280" height="320"></canvas>
+          <canvas id="grass-overlay" width="1280" height="320"></canvas>
+        </div>
         <div class="hint">
-          Hero experiment: with the <strong>latent heat</strong> toggle ON, the spray column turns cold
-          (blue in the temperature overlay), sinks, and fans out along the floor. Turn it OFF and the
-          same momentum-only spray drives an <em>updraft</em> instead — that flip is the proof the
-          coupling is real physics, not a rendering artifact.
+          <strong>Wide yard (32 m):</strong> click for water spray, Shift+click for <strong>air stream</strong>.
+          The default domain is four times wider than before so downdrafts can travel ~100 ft to distant trees.
+          Load the <strong>100 ft tree shake</strong> preset and watch flow tracers ride the floor outflow.
         </div>
       </div>
 
       <div class="panel">
+        <div class="section">
+          <div class="label">Presets</div>
+          <select id="preset-select" aria-label="Simulation preset"></select>
+          <div class="btn-row">
+            <button id="preset-load" type="button">Load preset</button>
+          </div>
+          <div id="preset-hint" class="hint"></div>
+        </div>
+
         <div class="section">
           <div class="label">Latent heat (evaporative cooling)</div>
           <div class="toggle-row">
@@ -107,10 +155,29 @@
             <label><input type="checkbox" id="show-arrows" checked> arrows</label>
             <label><input type="checkbox" id="show-droplets" checked> droplets</label>
           </div>
+          <div class="checks" style="margin-top:8px">
+            <label><input type="checkbox" id="show-tracers" checked> flow tracers</label>
+            <label><input type="checkbox" id="show-tracer-streaks" checked> streaks</label>
+          </div>
+          <div class="slider" style="margin-top:10px">
+            <div class="row"><span>Tracer density</span><span id="tracer-density-val"></span></div>
+            <input type="range" id="tracer-density" min="500" max="15000" step="250" value="4500">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Tracer lifetime</span><span id="tracer-lifetime-val"></span></div>
+            <input type="range" id="tracer-lifetime" min="3" max="25" step="0.5" value="10">
+          </div>
         </div>
 
         <div class="section">
-          <div class="label">Emitter</div>
+          <div class="label">Emitters (max 8)</div>
+          <div id="emitter-list"></div>
+          <div id="emitter-selected-info"></div>
+          <div class="btn-row" style="margin-bottom:10px">
+            <button id="add-water" type="button">+ Water</button>
+            <button id="add-air" type="button">+ Air stream</button>
+            <button id="remove-emitter" type="button">Remove</button>
+          </div>
           <div class="slider">
             <div class="row"><span>Speed</span><span id="emit-speed-val"></span></div>
             <input type="range" id="emit-speed" min="2" max="16" step="0.5" value="10">
@@ -138,6 +205,42 @@
         </div>
 
         <div class="section">
+          <div class="label">Environment</div>
+          <div class="toggle-row" style="margin-bottom:10px">
+            <input type="checkbox" id="show-grass" checked>
+            <span>Grass row (floor outflow)</span>
+          </div>
+          <div class="toggle-row" style="margin-bottom:10px">
+            <input type="checkbox" id="show-trees" checked>
+            <span>Trees (canopy sway)</span>
+          </div>
+          <div class="toggle-row" style="margin-bottom:10px">
+            <input type="checkbox" id="show-houses" checked>
+            <span>Houses + flags / smoke</span>
+          </div>
+          <div class="toggle-row" style="margin-bottom:10px">
+            <input type="checkbox" id="show-clouds" checked>
+            <span>Clouds (upper wind)</span>
+          </div>
+          <div class="toggle-row" style="margin-bottom:10px">
+            <input type="checkbox" id="show-ground-mist" checked>
+            <span>Ground mist (spray shadow)</span>
+          </div>
+          <div class="toggle-row" style="margin-bottom:10px">
+            <input type="checkbox" id="show-wet-ground" checked>
+            <span>Wet ground (puddle band)</span>
+          </div>
+          <div class="slider">
+            <div class="row"><span>Grass density</span><span id="grass-density-val"></span></div>
+            <input type="range" id="grass-density" min="40" max="220" step="5" value="120">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Grass stiffness</span><span id="grass-stiffness-val"></span></div>
+            <input type="range" id="grass-stiffness" min="0.2" max="0.95" step="0.01" value="0.72">
+          </div>
+        </div>
+
+        <div class="section">
           <div class="label">Ambient</div>
           <div class="slider">
             <div class="row"><span>Temperature</span><span id="t-amb-val"></span></div>
@@ -155,6 +258,53 @@
             <button id="pause">Pause</button>
             <button id="reset">Reset</button>
           </div>
+          <details class="advanced-section" id="advanced-section">
+            <summary>Advanced — grid &amp; solver</summary>
+            <div class="advanced-body">
+              <div class="slider">
+                <div class="row"><span>Timestep dt</span><span id="adv-dt-val"></span></div>
+                <input type="range" id="adv-dt" min="0.002083" max="0.025" step="0.002083" value="0.00833">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Substeps / frame</span><span id="adv-substeps-val"></span></div>
+                <input type="range" id="adv-substeps" min="1" max="8" step="1" value="2">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Jacobi iterations</span><span id="adv-jacobi-val"></span></div>
+                <input type="range" id="adv-jacobi" min="5" max="80" step="1" value="30">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Velocity damp</span><span id="adv-damp-val"></span></div>
+                <input type="range" id="adv-damp" min="0" max="0.12" step="0.005" value="0.02">
+              </div>
+              <div class="slider">
+                <div class="row"><span>T/q relax</span><span id="adv-relax-val"></span></div>
+                <input type="range" id="adv-relax" min="0.002" max="0.1" step="0.002" value="0.00833">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Domain width</span><span id="adv-domain-w-val"></span></div>
+                <input type="range" id="adv-domain-w" min="8" max="40" step="0.5" value="32">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Domain height</span><span id="adv-domain-h-val"></span></div>
+                <input type="range" id="adv-domain-h" min="4" max="12" step="0.25" value="8">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Grid nx</span><span id="adv-nx-val"></span></div>
+                <input type="range" id="adv-nx" min="128" max="512" step="8" value="512">
+              </div>
+              <div class="slider">
+                <div class="row"><span>Grid ny</span><span id="adv-ny-val"></span></div>
+                <input type="range" id="adv-ny" min="64" max="256" step="8" value="128">
+              </div>
+              <div class="hint" id="adv-cell-val" style="margin-top:4px">cell ≈ 31.3 mm · 256×192</div>
+              <div id="advanced-warnings"></div>
+              <div class="btn-row">
+                <button id="advanced-reset" type="button">Defaults</button>
+                <button id="advanced-apply" type="button">Apply &amp; reset</button>
+              </div>
+            </div>
+          </details>
           <div class="stats" style="margin-top:10px">
             <span class="k">Status</span><span class="v" id="status">initializing</span>
             <span class="k">Sim time</span><span class="v" id="sim-time">0.0 s</span>
