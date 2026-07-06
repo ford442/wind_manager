@@ -1,7 +1,16 @@
 {
   "name": "wind_manager",
   "private": true,
+  "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 8080"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "vite"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.71",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.3"
   }
 }

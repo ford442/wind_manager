@@ -1,17 +1,32 @@
-import { cellSize, qAmb } from '../sim/params.js';
+import { cellSize, qAmb, type Params } from '../sim/params';
+
+// Static shader imports via Vite (inlined at build/dev time)
+import commonSrc from '../shaders/common.wgsl?raw';
+import renderSrc from '../shaders/render.wgsl?raw';
 
 const RPARAM_BYTES = 32;
 const ARROW_STRIDE = 8;
 
-export async function createRenderer(device, format, fields, drops, params) {
-  const common = await (await fetch('shaders/common.wgsl')).text();
-  const src = await (await fetch('shaders/render.wgsl')).text();
+export interface Renderer {
+  rebuildBindGroups: (f: any) => void;
+  draw: (view: GPUTextureView, p: Params, f: any, canvasW: number, canvasH: number) => void;
+}
+
+export async function createRenderer(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  fields: any,
+  drops: any,
+  params: Params
+): Promise<Renderer> {
+  const common = commonSrc;
+  const src = renderSrc;
   const module = device.createShaderModule({
     label: 'render',
     code: common + '\n' + src,
   });
 
-  const blend = {
+  const blend: GPUBlendState = {
     color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
     alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
   };
@@ -27,14 +42,14 @@ export async function createRenderer(device, format, fields, drops, params) {
     label: 'arrows',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_arrows' },
-    fragment: { module, entryPoint: 'fs_arrows', targets: [{ format, blend }] },
+    fragment: { module, entryPoint: 'fs_arrows', targets: [{ format, blend: blend as any }] },
     primitive: { topology: 'line-list' },
   });
   const dropPipe = device.createRenderPipeline({
     label: 'droplets',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_drops' },
-    fragment: { module, entryPoint: 'fs_drops', targets: [{ format, blend }] },
+    fragment: { module, entryPoint: 'fs_drops', targets: [{ format, blend: blend as any }] },
     primitive: { topology: 'triangle-list' },
   });
 

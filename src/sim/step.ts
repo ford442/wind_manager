@@ -1,23 +1,39 @@
-import { cellSize, qAmb } from './params.js';
+import { cellSize, qAmb, type Params } from './params';
+import type { Fields } from './fields';
+import type { Droplets } from './droplets';
+
+// Static shader imports via Vite (inlined at build/dev time)
+import commonSrc from '../shaders/common.wgsl?raw';
+import dropletsSrc from '../shaders/droplets.wgsl?raw';
+import applyScatterSrc from '../shaders/apply_scatter.wgsl?raw';
+import advectSrc from '../shaders/advect.wgsl?raw';
+import buoyancySrc from '../shaders/buoyancy.wgsl?raw';
+import pressureSrc from '../shaders/pressure.wgsl?raw';
 
 const PARAM_BYTES = 80;
 
-async function loadShader(name) {
-  const res = await fetch(`shaders/${name}`);
-  if (!res.ok) throw new Error(`failed to load shaders/${name}`);
-  return res.text();
+export interface Sim {
+  time: number;
+  frame: number;
+  getFields: () => Fields;
+  rebuildBindGroups: () => void;
+  reset: (p: Params) => void;
+  step: (p: Params) => void;
 }
 
-export async function createSim(device, fields, drops, params) {
-  const common = await loadShader('common.wgsl');
-  const [srcDrops, srcApply, srcAdvect, srcBuoy, srcPressure] =
-    await Promise.all([
-      loadShader('droplets.wgsl'),
-      loadShader('apply_scatter.wgsl'),
-      loadShader('advect.wgsl'),
-      loadShader('buoyancy.wgsl'),
-      loadShader('pressure.wgsl'),
-    ]);
+export async function createSim(
+  device: GPUDevice,
+  fields: Fields,
+  drops: Droplets,
+  params: Params
+): Promise<Sim> {
+  // No more runtime fetch — sources are already strings
+  const common = commonSrc;
+  const srcDrops = dropletsSrc;
+  const srcApply = applyScatterSrc;
+  const srcAdvect = advectSrc;
+  const srcBuoy = buoyancySrc;
+  const srcPressure = pressureSrc;
 
   const mod = (src, label) =>
     device.createShaderModule({ label, code: common + '\n' + src });
@@ -198,8 +214,8 @@ export async function createSim(device, fields, drops, params) {
   let frame = 0;
   let seed = 1;
 
-  const wg = (n, size) => Math.ceil(n / size);
-  const wg2d = (nx, ny, sx, sy) => [
+  const wg = (n: number, size: number) => Math.ceil(n / size);
+  const wg2d = (nx: number, ny: number, sx: number, sy: number): [number, number] => [
     Math.ceil(nx / sx),
     Math.ceil(ny / sy),
   ];

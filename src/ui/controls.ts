@@ -1,5 +1,7 @@
-export function setupControls(params, { onReset }) {
-  const $ = (id) => document.getElementById(id);
+import type { Params } from '../sim/params';
+
+export function setupControls(params: Params, { onReset }: { onReset: () => void }) {
+  const $ = (id: string): any => document.getElementById(id);
 
   const latent = $('latent-toggle');
   latent.checked = params.latentOn;
@@ -10,16 +12,16 @@ export function setupControls(params, { onReset }) {
       : 'OFF — momentum only → updraft';
   });
 
-  const modes = [
+  const modes: [string, number][] = [
     ['ov-none', 0],
     ['ov-vel', 1],
     ['ov-temp', 2],
     ['ov-hum', 3],
   ];
-  function setOverlay(mode) {
+  function setOverlay(mode: number) {
     params.overlay = mode;
     for (const [id, m] of modes) {
-      $(id).classList.toggle('active', m === mode);
+      $(id as string).classList.toggle('active', m === mode);
     }
   }
   for (const [id, m] of modes) {
@@ -35,7 +37,7 @@ export function setupControls(params, { onReset }) {
   dropsChk.checked = params.showDroplets;
   dropsChk.addEventListener('change', () => (params.showDroplets = dropsChk.checked));
 
-  const sliders = [
+  const sliders: [string, keyof Params, (v: number) => string][] = [
     ['emit-speed', 'emitSpeed', (v) => `${v.toFixed(1)} m/s`],
     ['emit-spread', 'emitSpreadDeg', (v) => `±${v.toFixed(0)}°`],
     ['emit-angle', 'emitAngleDeg', (v) => `${v.toFixed(0)}°`],
@@ -46,17 +48,17 @@ export function setupControls(params, { onReset }) {
     ['rh-amb', 'rhAmb', (v) => `${v.toFixed(0)} %`],
   ];
   for (const [id, key, fmt] of sliders) {
-    const el = $(id);
-    const label = $(id + '-val');
-    el.value = params[key];
-    label.textContent = fmt(params[key]);
+    const el = $(id) as HTMLInputElement;
+    const label = $(id + '-val') as HTMLElement;
+    el.value = String(params[key]);
+    label.textContent = fmt(params[key] as number);
     el.addEventListener('input', () => {
-      params[key] = parseFloat(el.value);
+      (params as any)[key] = parseFloat(el.value);
       if (params.rMinUm > params.rMaxUm) {
         if (key === 'rMinUm') params.rMaxUm = params.rMinUm;
         else params.rMinUm = params.rMaxUm;
       }
-      label.textContent = fmt(params[key]);
+      label.textContent = fmt(params[key] as number);
     });
   }
 

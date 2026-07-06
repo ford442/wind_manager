@@ -1,10 +1,43 @@
-export function qSat(tC) {
+export interface Params {
+  nx: number;
+  ny: number;
+  domainW: number;
+  domainH: number;
+  dt: number;
+  substeps: number;
+  jacobiIters: number;
+
+  tAmb: number;
+  rhAmb: number;
+
+  latentOn: boolean;
+
+  emitX: number;
+  emitY: number;
+  emitAngleDeg: number;
+  emitSpreadDeg: number;
+  emitSpeed: number;
+  emitRate: number;
+  rMinUm: number;
+  rMaxUm: number;
+  maxDroplets: number;
+
+  relax: number;
+  damp: number;
+
+  paused: boolean;
+  overlay: number;
+  showArrows: boolean;
+  showDroplets: boolean;
+}
+
+export function qSat(tC: number): number {
   const es = 610.94 * Math.exp((17.625 * tC) / (tC + 243.04));
   const p = 101325.0;
   return (0.622 * es) / (p - 0.378 * es);
 }
 
-export function defaultParams() {
+export function defaultParams(): Params {
   return {
     nx: 256,
     ny: 192,
@@ -39,10 +72,10 @@ export function defaultParams() {
   };
 }
 
-export function cellSize(p) {
+export function cellSize(p: Params): number {
   return p.domainW / p.nx;
 }
 
-export function qAmb(p) {
+export function qAmb(p: Params): number {
   return (p.rhAmb / 100) * qSat(p.tAmb);
 }

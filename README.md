@@ -4,14 +4,20 @@ An interactive simulation of **evaporative downdraft** — the real effect behin
 
 ## WebGPU simulation (Issue #1)
 
-Open `index.html` via a local HTTP server (ES modules + shader fetch require it):
+## Development
+
+This project uses Vite for fast development and bundling.
 
 ```bash
-npm start
-# then visit http://localhost:8080
+npm install
+npm run dev
+# then visit the URL shown (usually http://localhost:5173)
 ```
 
-Or: `python3 -m http.server 8080`
+- `npm run build` — produces a production build in `dist/`
+- `npm run preview` — preview the production build locally
+
+Legacy standalone prototype is still at `/prototype.html` when the dev server is running.
 
 ### Features
 
@@ -21,17 +27,20 @@ Or: `python3 -m http.server 8080`
 - Field overlays: velocity, temperature, humidity; plus droplet points and velocity arrows
 - Stable-fluids pressure projection (collocated grid + Jacobi)
 
-### Module layout
+### Module layout (src/)
 
 ```
-sim/          params, fields, droplets, step orchestration
-shaders/      WGSL compute + render passes
-render/       overlay renderer
-ui/           controls
-main.js       WebGPU init + frame loop
-index.html    main app
-prototype.html  legacy 2D canvas playground
+src/
+  main.ts     WebGPU init + frame loop (TypeScript)
+  sim/        params (with Params interface), fields, droplets, step orchestration
+  render/     overlay renderer
+  ui/         controls
+  shaders/    WGSL compute + render passes (imported via ?raw)
+index.html    app shell (references /src/main.ts)
+public/       static assets (prototype.html legacy)
 ```
+
+The project is now a Vite + TypeScript setup. Run `npm run dev` to develop.
 
 ## Legacy prototype
 

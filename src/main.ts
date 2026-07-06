@@ -1,9 +1,14 @@
-import { defaultParams } from './sim/params.js';
-import { createFields } from './sim/fields.js';
-import { createDroplets } from './sim/droplets.js';
-import { createSim } from './sim/step.js';
-import { createRenderer } from './render/overlays.js';
-import { setupControls } from './ui/controls.js';
+import type { Params } from './sim/params';
+import { defaultParams } from './sim/params';
+import type { Fields } from './sim/fields';
+import { createFields } from './sim/fields';
+import type { Droplets } from './sim/droplets';
+import { createDroplets } from './sim/droplets';
+import type { Sim } from './sim/step';
+import { createSim } from './sim/step';
+import type { Renderer } from './render/overlays';
+import { createRenderer } from './render/overlays';
+import { setupControls } from './ui/controls';
 
 const DIAG_INTERVAL = 30;
 
@@ -14,7 +19,7 @@ function fail(msg) {
   document.getElementById('status').textContent = 'unavailable';
 }
 
-async function init() {
+async function init(): Promise<void> {
   if (!navigator.gpu) {
     fail('This browser does not expose WebGPU (navigator.gpu is missing). ' +
          'Use a recent Chrome/Edge, or enable WebGPU in your browser.');
@@ -32,16 +37,16 @@ async function init() {
     document.getElementById('nan-status').classList.add('bad');
   });
 
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('webgpu');
+  const canvas = document.getElementById('c') as HTMLCanvasElement;
+  const ctx = canvas.getContext('webgpu')!;
   const format = navigator.gpu.getPreferredCanvasFormat();
   ctx.configure({ device, format, alphaMode: 'opaque' });
 
-  const params = defaultParams();
-  const fields = createFields(device, params);
-  const drops = createDroplets(device, params);
-  const sim = await createSim(device, fields, drops, params);
-  const renderer = await createRenderer(device, format, fields, drops, params);
+  const params: Params = defaultParams();
+  const fields: Fields = createFields(device, params);
+  const drops: Droplets = createDroplets(device, params);
+  const sim: Sim = await createSim(device, fields, drops, params);
+  const renderer: Renderer = await createRenderer(device, format, fields, drops, params);
 
   sim.reset(params);
   setupControls(params, {

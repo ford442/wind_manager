@@ -1,12 +1,30 @@
-import { cellSize, qAmb } from './params.js';
+import { cellSize, qAmb, type Params } from './params';
 
-export function createFields(device, p) {
+export interface Fields {
+  n: number;
+  vel0: GPUBuffer;
+  vel1: GPUBuffer;
+  T0: GPUBuffer;
+  T1: GPUBuffer;
+  q0: GPUBuffer;
+  q1: GPUBuffer;
+  p0: GPUBuffer;
+  p1: GPUBuffer;
+  div: GPUBuffer;
+  accQ: GPUBuffer;
+  accT: GPUBuffer;
+  accM: GPUBuffer;
+  h: number;
+  reset: (queue: GPUQueue, params: Params) => void;
+}
+
+export function createFields(device: GPUDevice, p: Params): Fields {
   const n = p.nx * p.ny;
   const usage =
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const mk = (size) => device.createBuffer({ size, usage });
 
-  const f = {
+  const f: any = {
     n,
     vel0: mk(n * 8),
     vel1: mk(n * 8),
@@ -22,7 +40,7 @@ export function createFields(device, p) {
     accM: mk(n * 8),
   };
 
-  f.reset = (queue, params) => {
+  f.reset = (queue: GPUQueue, params: Params) => {
     const zeros2 = new Float32Array(n * 2);
     const tInit = new Float32Array(n).fill(params.tAmb);
     const qInit = new Float32Array(n).fill(qAmb(params));
@@ -42,5 +60,5 @@ export function createFields(device, p) {
   };
 
   f.h = cellSize(p);
-  return f;
+  return f as Fields;
 }
