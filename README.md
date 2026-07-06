@@ -1,40 +1,46 @@
 # wind_manager
 
-An interactive visualization of wind and water streams interacting with a landscape — grass, trees, houses, and clouds.
+An interactive simulation of **evaporative downdraft** — the real effect behind the garden-hose observation where a fine water spray evaporatively cools the air it rises through, that cooled air becomes negatively buoyant and sinks, and the sinking column spreads along the floor as a radial outflow gust (a backyard dry microburst).
 
-## The Idea
+## WebGPU simulation (Issue #1)
 
-Inspired by real-world experiments: spraying water from a garden hose in specific ways can generate surprisingly strong, localized gusts capable of visibly shaking tall trees over 100 feet away. Wind appears and disappears dramatically depending on the arrangement of air and water streams.
+Open `index.html` via a local HTTP server (ES modules + shader fetch require it):
 
-Goal: build a playground to explore different configurations of:
-- Water jets / hoses (particles with momentum)
-- Air streams / gust sources (force fields)
-- How they couple and propagate to move flexible elements at a distance
+```bash
+npm start
+# then visit http://localhost:8080
+```
 
-## Vision
+Or: `python3 -m http.server 8080`
 
-- **Scene**: Field of grass, several trees (different heights/distances), houses, layered clouds.
-- **Wind**: Combination of global wind + multiple user-placeable localized streams. Visualize the flow.
-- **Water**: Ejected droplets affected by gravity, drag, and the local wind field. Water can "seed" or amplify visible air movement.
-- **Interaction**: Drag to reposition emitters, tweak strength/angle/spread. Experiment quickly with different arrangements and see emergent effects (e.g. upward water jet → high air disturbance → distant tree sway).
-- **Future**: Presets, recording, more realistic turbulence, 3D view, sound, parameter studies.
+### Features
 
-## Getting Started (Prototype)
+- Two-way coupled **air / droplet / temperature** solver on GPU (WebGPU)
+- Vertical spray emitter with d²-law evaporation, virtual-temperature buoyancy, semi-implicit droplet drag
+- **Latent heat toggle** — ON → downdraft + floor outflow; OFF → momentum-only updraft (proof-of-mechanism)
+- Field overlays: velocity, temperature, humidity; plus droplet points and velocity arrows
+- Stable-fluids pressure projection (collocated grid + Jacobi)
 
-Open `index.html` in a browser. No build step.
+### Module layout
 
-Current state: basic interactive 2D canvas prototype.
+```
+sim/          params, fields, droplets, step orchestration
+shaders/      WGSL compute + render passes
+render/       overlay renderer
+ui/           controls
+main.js       WebGPU init + frame loop
+index.html    main app
+prototype.html  legacy 2D canvas playground
+```
 
-## Roadmap ideas
+## Legacy prototype
 
-- [ ] Multiple draggable water + wind emitters
-- [ ] Better wind field visualization (streamlines / tracers)
-- [ ] Variable tree response (height, foliage density, distance damping)
-- [ ] Water splashes, ground interaction, evaporation
-- [ ] Turbulence / Perlin-style noise wind
-- [ ] UI controls panel (strength, angle, pulse mode)
-- [ ] Export/share specific configurations
-- [ ] Performance: thousands of grass blades + particles
-- [ ] Optional: p5.js or Three.js upgrade path
+`prototype.html` is the earlier 2D canvas playground (grass, trees, draggable water/wind emitters). No build step.
+
+## Roadmap
+
+- Issue #2: fans, vent hoses, multiple emitters
+- Issue #3: collection surfaces, wettability, radiative cooling
+- Issue #4: day/night cycle, ambient presets
 
 Let's make the invisible visible and play with the forces that move the world.
