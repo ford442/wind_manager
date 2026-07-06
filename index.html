@@ -3,1136 +3,172 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>wind_manager — water & wind playground</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>wind_manager — evaporative downdraft (coupled air ⇄ droplet ⇄ thermal)</title>
   <style>
-    body { background: #0a0f0a; color: #e2e8f0; }
-    canvas { 
-      display: block; 
-      background: #0f172a; 
-      border: 1px solid #334155;
-      touch-action: none;
+    :root {
+      --bg: #0a0f14; --panel: #101823; --border: #223042;
+      --text: #dbe4ee; --muted: #7c8ea3; --accent: #38bdf8; --good: #34d399; --bad: #f87171;
     }
-    .emitter {
-      transition: all 0.1s ease;
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
     }
-    .control-label { font-size: 0.75rem; letter-spacing: 0.5px; }
+    .wrap { max-width: 1360px; margin: 0 auto; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
+    header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    .layout { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+    .canvas-col { flex: 1 1 640px; min-width: 320px; }
+    canvas {
+      display: block; width: 100%; aspect-ratio: 4 / 3; background: #060a0f;
+      border: 1px solid var(--border); border-radius: 12px;
+    }
+    .panel {
+      width: 300px; flex: 0 0 300px; background: var(--panel);
+      border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+    }
+    .section { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .section:first-child { padding-top: 0; }
+    .section:last-child { border-bottom: none; padding-bottom: 0; }
+    .label { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; }
+    .toggle-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+    #latent-state { font-size: 12px; color: var(--accent); }
+    .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    button {
+      background: #17222f; color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer;
+    }
+    button:hover { background: #1d2b3b; }
+    button.active { background: var(--accent); border-color: var(--accent); color: #06202e; font-weight: 600; }
+    .slider { margin-bottom: 10px; }
+    .slider .row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+    .slider .row span:last-child { font-family: ui-monospace, monospace; color: var(--accent); }
+    input[type=range] { width: 100%; accent-color: var(--accent); }
+    .stats { font-size: 12px; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+    .stats .k { color: var(--muted); }
+    .stats .v { font-family: ui-monospace, monospace; text-align: right; }
+    #nan-status { color: var(--good); }
+    #nan-status.bad { color: var(--bad); font-weight: 700; }
+    #gpu-error {
+      display: none; background: #2a1215; border: 1px solid #7f1d1d; color: #fecaca;
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px;
+    }
+    .hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 8px; }
+    a { color: var(--accent); }
+    .checks { display: flex; gap: 14px; font-size: 12px; margin-top: 6px; }
+    .checks label { display: flex; gap: 6px; align-items: center; }
   </style>
 </head>
-<body class="min-h-screen p-4 md:p-8">
-  <div class="max-w-[1100px] mx-auto">
-    <!-- Header -->
-    <div class="flex items-end justify-between mb-4">
+<body>
+  <div class="wrap">
+    <header>
       <div>
-        <h1 class="text-3xl font-semibold tracking-tight">wind_manager</h1>
-        <p class="text-slate-400 text-sm mt-0.5">Water + wind interacting with grass, trees, houses &amp; clouds</p>
+        <h1>wind_manager — evaporative downdraft</h1>
+        <p>Two-way coupled air ⇄ droplet ⇄ temperature solver (WebGPU). A fine spray cools the air it rises through; the cooled column sinks and spreads along the floor as an outflow gust.</p>
       </div>
-      <div class="text-right text-xs text-slate-500">
-        Click canvas to add emitter<br>
-        Drag emitters to move • Drag from emitter to set direction
+      <div style="font-size:11px;color:var(--muted);text-align:right">
+        legacy canvas prototype: <a href="prototype.html">prototype.html</a>
       </div>
-    </div>
+    </header>
 
-    <div class="flex flex-col lg:flex-row gap-4">
-      <!-- Canvas -->
-      <div class="flex-1">
-        <canvas id="c" width="900" height="560" class="rounded-xl shadow-2xl w-full max-w-full"></canvas>
-        <div class="mt-2 text-[10px] text-slate-500 flex gap-x-4">
-          <div>Global wind: <span id="gw-val" class="font-mono text-slate-300">1.8</span></div>
-          <div>Particles: <span id="part-val" class="font-mono text-slate-300">0</span></div>
-          <div>Mode: <span id="mode-val" class="font-mono text-emerald-400">water + wind</span></div>
+    <div id="gpu-error"><strong>WebGPU unavailable.</strong> <span class="msg"></span></div>
+
+    <div class="layout">
+      <div class="canvas-col">
+        <canvas id="c" width="1024" height="768"></canvas>
+        <div class="hint">
+          Hero experiment: with the <strong>latent heat</strong> toggle ON, the spray column turns cold
+          (blue in the temperature overlay), sinks, and fans out along the floor. Turn it OFF and the
+          same momentum-only spray drives an <em>updraft</em> instead — that flip is the proof the
+          coupling is real physics, not a rendering artifact.
         </div>
       </div>
 
-      <!-- Controls -->
-      <div class="w-full lg:w-72 bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
-        <div>
-          <div class="control-label text-slate-400 mb-1.5">GLOBAL WIND</div>
-          <input type="range" id="global-wind" min="0" max="6" step="0.1" value="1.8" class="w-full accent-emerald-500">
-          <div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
-            <div>calm</div><div>strong</div>
+      <div class="panel">
+        <div class="section">
+          <div class="label">Latent heat (evaporative cooling)</div>
+          <div class="toggle-row">
+            <input type="checkbox" id="latent-toggle" checked>
+            <span id="latent-state">ON — evaporative cooling → downdraft</span>
           </div>
         </div>
 
-        <div>
-          <div class="control-label text-slate-400 mb-1.5">EMITTER TYPE</div>
-          <div class="flex gap-2">
-            <button id="mode-water" 
-                    class="flex-1 px-3 py-1.5 text-sm rounded-lg bg-sky-600 hover:bg-sky-500 active:bg-sky-700 font-medium">Water Jet</button>
-            <button id="mode-wind" 
-                    class="flex-1 px-3 py-1.5 text-sm rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 font-medium">Wind Gust</button>
+        <div class="section">
+          <div class="label">Overlay</div>
+          <div class="btn-row">
+            <button id="ov-none">None</button>
+            <button id="ov-vel">Velocity</button>
+            <button id="ov-temp" class="active">Temperature</button>
+            <button id="ov-hum">Humidity</button>
           </div>
-          <div class="text-[10px] text-slate-500 mt-1">Click canvas to place • Shift+click for the other type</div>
-        </div>
-
-        <div class="pt-2 border-t border-slate-800">
-          <div class="control-label text-slate-400 mb-1.5">SELECTED EMITTER</div>
-          <div id="selected-info" class="text-xs bg-slate-950 border border-slate-800 rounded p-2 min-h-[52px]">
-            None selected
-          </div>
-          
-          <div class="mt-3 space-y-3" id="emitter-controls">
-            <div>
-              <div class="flex justify-between text-xs mb-1">
-                <span class="text-slate-400">Power</span>
-                <span id="power-val" class="font-mono text-slate-300">2.5</span>
-              </div>
-              <input type="range" id="power" min="0.2" max="8" step="0.1" value="2.5" class="w-full accent-emerald-500">
-            </div>
-            <div>
-              <div class="flex justify-between text-xs mb-1">
-                <span class="text-slate-400">Angle (° from up)</span>
-                <span id="angle-val" class="font-mono text-slate-300">0</span>
-              </div>
-              <input type="range" id="angle" min="-90" max="90" step="1" value="0" class="w-full accent-emerald-500">
-            </div>
-            <div>
-              <div class="flex justify-between text-xs mb-1">
-                <span class="text-slate-400">Spread</span>
-                <span id="spread-val" class="font-mono text-slate-300">18</span>
-              </div>
-              <input type="range" id="spread" min="2" max="55" step="1" value="18" class="w-full accent-emerald-500">
-            </div>
-            <div class="flex gap-2 pt-1">
-              <button id="delete-emitter" 
-                      class="flex-1 text-xs px-3 py-1.5 rounded-lg border border-red-900 text-red-400 hover:bg-red-950 active:bg-red-900">Delete</button>
-              <button id="pulse-emitter" 
-                      class="flex-1 text-xs px-3 py-1.5 rounded-lg border border-emerald-800 text-emerald-400 hover:bg-emerald-950 active:bg-emerald-900">Pulse</button>
-            </div>
+          <div class="checks">
+            <label><input type="checkbox" id="show-arrows" checked> arrows</label>
+            <label><input type="checkbox" id="show-droplets" checked> droplets</label>
           </div>
         </div>
 
-        <div class="pt-2 border-t border-slate-800 flex flex-wrap gap-2">
-          <button id="clear-water" 
-                  class="text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">Clear water</button>
-          <button id="add-example" 
-                  class="text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">Add example setup</button>
-          <button id="reset-all" 
-                  class="text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">Reset scene</button>
+        <div class="section">
+          <div class="label">Emitter</div>
+          <div class="slider">
+            <div class="row"><span>Speed</span><span id="emit-speed-val"></span></div>
+            <input type="range" id="emit-speed" min="2" max="16" step="0.5" value="10">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Angle (from up)</span><span id="emit-angle-val"></span></div>
+            <input type="range" id="emit-angle" min="-45" max="45" step="1" value="0">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Cone half-angle</span><span id="emit-spread-val"></span></div>
+            <input type="range" id="emit-spread" min="3" max="35" step="1" value="15">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Emission rate</span><span id="emit-rate-val"></span></div>
+            <input type="range" id="emit-rate" min="500" max="20000" step="250" value="6000">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Min droplet radius</span><span id="r-min-val"></span></div>
+            <input type="range" id="r-min" min="10" max="300" step="5" value="50">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Max droplet radius</span><span id="r-max-val"></span></div>
+            <input type="range" id="r-max" min="100" max="1500" step="25" value="800">
+          </div>
         </div>
 
-        <div class="text-[10px] leading-tight text-slate-500 pt-1">
-          Tip: Try a strong upward water jet near the left — watch the distant tall tree react.
+        <div class="section">
+          <div class="label">Ambient</div>
+          <div class="slider">
+            <div class="row"><span>Temperature</span><span id="t-amb-val"></span></div>
+            <input type="range" id="t-amb" min="5" max="45" step="1" value="30">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Relative humidity</span><span id="rh-amb-val"></span></div>
+            <input type="range" id="rh-amb" min="5" max="95" step="1" value="20">
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="label">Simulation</div>
+          <div class="btn-row">
+            <button id="pause">Pause</button>
+            <button id="reset">Reset</button>
+          </div>
+          <div class="stats" style="margin-top:10px">
+            <span class="k">Status</span><span class="v" id="status">initializing</span>
+            <span class="k">Sim time</span><span class="v" id="sim-time">0.0 s</span>
+            <span class="k">FPS</span><span class="v" id="fps">—</span>
+            <span class="k">T range</span><span class="v" id="t-range">—</span>
+            <span class="k">Max speed</span><span class="v" id="max-speed">—</span>
+            <span class="k">Emitted</span><span class="v" id="emitted">—</span>
+            <span class="k">Health</span><span class="v" id="nan-status">—</span>
+          </div>
         </div>
       </div>
-    </div>
-
-    <div class="mt-4 text-xs text-slate-500 max-w-prose">
-      Real phenomenon: focused water + air jets can create surprisingly strong localized wind that propagates and shakes trees far away.
-      Experiment with placement, angle, and power to recreate (and exceed) the effect.
     </div>
   </div>
 
-  <script>
-    // Tailwind script
-    function initTailwind() {
-      document.documentElement.style.setProperty('--accent', '#10b981');
-    }
-
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d', { alpha: true });
-
-    // Scene dimensions (logical)
-    const W = canvas.width;
-    const H = canvas.height;
-    const GROUND_Y = H - 70;
-
-    // State
-    let time = 0;
-    let globalWind = 1.8;
-    let emitters = [];
-    let waterParticles = [];
-    let windTracers = [];
-    let selectedEmitter = null;
-    let mode = 'water'; // 'water' or 'wind'
-    let isDragging = false;
-    let dragOffsetX = 0, dragOffsetY = 0;
-    let isSettingAngle = false;
-    let angleStartX = 0, angleStartY = 0;
-
-    // Simple seeded-ish noise for wind (multi-octave sine approximation)
-    function windNoise(x, y, t) {
-      const s1 = Math.sin(x * 0.011 + t * 0.7) * 0.6;
-      const s2 = Math.sin(x * 0.027 + y * 0.009 + t * 1.1) * 0.35;
-      const s3 = Math.sin(x * 0.051 - y * 0.017 + t * 0.45) * 0.22;
-      return s1 + s2 + s3;
-    }
-
-    function getWindAt(x, y) {
-      // Global wind (mostly horizontal, slight vertical variation)
-      let vx = globalWind * (1.0 + Math.sin(y * 0.008 + time * 0.4) * 0.15);
-      let vy = globalWind * 0.08 * Math.sin(x * 0.012 + time * 0.6);
-
-      // Add noise turbulence
-      const noise = windNoise(x, y, time);
-      vx += noise * (1.2 + globalWind * 0.3);
-      vy += windNoise(x + 140, y + 80, time * 0.9) * 0.6;
-
-      // Localized emitters
-      for (const e of emitters) {
-        const dx = x - e.x;
-        const dy = y - (e.y - 10); // bias a little upward
-        const dist = Math.hypot(dx, dy);
-        if (dist < 6) continue;
-
-        const falloff = Math.max(0, 1 - (dist / (e.radius || 260)));
-        const falloff2 = Math.pow(falloff, 1.6); // sharper dropoff
-
-        const strength = (e.power || 2.5) * falloff2 * 1.1;
-        const dirX = Math.cos(e.angle - Math.PI / 2); // 0 = up
-        const dirY = Math.sin(e.angle - Math.PI / 2);
-
-        // Core stream direction
-        vx += dirX * strength * 1.6;
-        vy += dirY * strength * 1.6;
-
-        // Add some spread / curl around the stream
-        const cross = -dy * 0.6 + dx * 0.3; // perpendicular-ish
-        vx += cross * strength * 0.035 * (e.spread || 20) / 20;
-        vy += -cross * strength * 0.018;
-
-        // Water jets create extra visible turbulence
-        if (e.type === 'water') {
-          vx += noise * strength * 0.4;
-          vy += (Math.sin(dist * 0.07 + time * 3) * 0.6) * strength * 0.25;
-        }
-      }
-      return { vx, vy };
-    }
-
-    // Grass
-    let grass = [];
-    function initGrass() {
-      grass = [];
-      for (let i = 0; i < 140; i++) {
-        const x = 30 + Math.random() * (W - 60);
-        const h = 18 + Math.random() * 32;
-        const density = Math.random() * 0.6 + 0.7;
-        grass.push({
-          x,
-          baseY: GROUND_Y + (Math.random() - 0.5) * 3,
-          h,
-          phase: Math.random() * Math.PI * 2,
-          sway: 0,
-          segments: 3 + (h > 32 ? 1 : 0),
-          thickness: 1.1 + Math.random() * 0.6
-        });
-      }
-      // Sort by x for slight depth layering
-      grass.sort((a, b) => a.x - b.x);
-    }
-
-    // Trees
-    let trees = [];
-    function initTrees() {
-      trees = [
-        { x: 180, h: 135, type: 'tall', sway: 0, phase: 1.2 },
-        { x: 310, h: 92, type: 'medium', sway: 0, phase: 0.4 },
-        { x: 560, h: 118, type: 'tall', sway: 0, phase: 2.9 },
-        { x: 720, h: 67, type: 'medium', sway: 0, phase: 1.8 },
-        { x: 830, h: 48, type: 'small', sway: 0, phase: 0.1 }
-      ];
-    }
-
-    // Houses
-    let houses = [];
-    function initHouses() {
-      houses = [
-        { x: 420, w: 78, h: 52, flagSway: 0 },
-        { x: 660, w: 62, h: 44, flagSway: 0 }
-      ];
-    }
-
-    // Clouds
-    let clouds = [];
-    function initClouds() {
-      clouds = [
-        { x: 80, y: 72, s: 1.0, phase: 0 },
-        { x: 240, y: 48, s: 0.75, phase: 1.6 },
-        { x: 470, y: 91, s: 1.3, phase: 3.2 },
-        { x: 690, y: 55, s: 0.9, phase: 4.1 },
-        { x: 850, y: 80, s: 1.1, phase: 5.9 }
-      ];
-    }
-
-    function resetScene() {
-      emitters = [];
-      waterParticles = [];
-      windTracers = [];
-      selectedEmitter = null;
-      initGrass();
-      initTrees();
-      initHouses();
-      initClouds();
-      updateSelectedUI();
-    }
-
-    function addExampleSetup() {
-      // A strong upward water jet on the left that should affect the distant tall tree
-      emitters.push({
-        id: Date.now(),
-        type: 'water',
-        x: 95,
-        y: GROUND_Y - 28,
-        angle: -4,           // almost straight up
-        power: 4.6,
-        spread: 14,
-        radius: 310
-      });
-      // A secondary wind gust a bit to the right
-      emitters.push({
-        id: Date.now() + 1,
-        type: 'wind',
-        x: 210,
-        y: GROUND_Y - 55,
-        angle: 18,
-        power: 3.2,
-        spread: 27,
-        radius: 240
-      });
-      // One more far water to see interactions
-      emitters.push({
-        id: Date.now() + 2,
-        type: 'water',
-        x: 380,
-        y: GROUND_Y - 12,
-        angle: -32,
-        power: 2.1,
-        spread: 22,
-        radius: 180
-      });
-      updateSelectedUI();
-    }
-
-    // Emitters
-    function createEmitter(x, y, type) {
-      return {
-        id: Date.now() + Math.random(),
-        type,                 // 'water' | 'wind'
-        x: Math.max(25, Math.min(W - 25, x)),
-        y: Math.max(40, Math.min(GROUND_Y - 5, y)),
-        angle: -12 + (Math.random() - 0.5) * 18, // mostly upward
-        power: type === 'water' ? 2.8 : 3.4,
-        spread: type === 'water' ? 16 : 24,
-        radius: type === 'water' ? 280 : 220
-      };
-    }
-
-    function getEmitterAt(px, py) {
-      let closest = null;
-      let minDist = 26;
-      for (const e of emitters) {
-        const d = Math.hypot(e.x - px, e.y - py);
-        if (d < minDist) {
-          minDist = d;
-          closest = e;
-        }
-      }
-      return closest;
-    }
-
-    function updateEmitterFromUI() {
-      if (!selectedEmitter) return;
-      const power = parseFloat(document.getElementById('power').value);
-      const angle = parseFloat(document.getElementById('angle').value);
-      const spread = parseFloat(document.getElementById('spread').value);
-
-      selectedEmitter.power = power;
-      selectedEmitter.angle = angle;
-      selectedEmitter.spread = spread;
-    }
-
-    function syncUIFromEmitter() {
-      if (!selectedEmitter) return;
-      document.getElementById('power').value = selectedEmitter.power;
-      document.getElementById('angle').value = selectedEmitter.angle;
-      document.getElementById('spread').value = selectedEmitter.spread;
-      updateEmitterValueLabels();
-    }
-
-    function updateEmitterValueLabels() {
-      const p = document.getElementById('power-val');
-      const a = document.getElementById('angle-val');
-      const s = document.getElementById('spread-val');
-      p.textContent = parseFloat(document.getElementById('power').value).toFixed(1);
-      a.textContent = parseFloat(document.getElementById('angle').value).toFixed(0);
-      s.textContent = parseFloat(document.getElementById('spread').value).toFixed(0);
-    }
-
-    function updateSelectedUI() {
-      const info = document.getElementById('selected-info');
-      const ctrls = document.getElementById('emitter-controls');
-      
-      if (!selectedEmitter) {
-        info.innerHTML = '<span class="text-slate-500">None selected — click an emitter or add one</span>';
-        ctrls.style.opacity = '0.4';
-        ctrls.style.pointerEvents = 'none';
-        return;
-      }
-      ctrls.style.opacity = '1';
-      ctrls.style.pointerEvents = 'auto';
-
-      const t = selectedEmitter.type === 'water' ? 
-        '<span class="text-sky-400">WATER JET</span>' : 
-        '<span class="text-emerald-400">WIND GUST</span>';
-      
-      info.innerHTML = `
-        <div class="flex justify-between items-center">
-          <div>${t}</div>
-          <div class="text-[10px] text-slate-500 font-mono">#${selectedEmitter.id.toString().slice(-4)}</div>
-        </div>
-        <div class="text-[10px] mt-0.5 text-slate-400">
-          x:${Math.round(selectedEmitter.x)} y:${Math.round(selectedEmitter.y)}
-        </div>
-      `;
-      
-      syncUIFromEmitter();
-    }
-
-    // Drawing helpers
-    function drawSky() {
-      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y + 30);
-      g.addColorStop(0, '#0f172a');
-      g.addColorStop(0.45, '#1e3a5f');
-      g.addColorStop(0.78, '#334155');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, GROUND_Y + 40);
-    }
-
-    function drawGround() {
-      ctx.fillStyle = '#166534';
-      ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-      
-      // Subtle ground texture / slope
-      ctx.fillStyle = '#14532d';
-      for (let i = 0; i < 7; i++) {
-        ctx.fillRect(0, GROUND_Y + 6 + i * 8, W, 4);
-      }
-      // Horizon line
-      ctx.strokeStyle = '#4ade80';
-      ctx.globalAlpha = 0.15;
-      ctx.beginPath();
-      ctx.moveTo(0, GROUND_Y);
-      ctx.lineTo(W, GROUND_Y);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
-    function drawGrass() {
-      ctx.strokeStyle = '#4ade80';
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-
-      for (const blade of grass) {
-        const wind = getWindAt(blade.x, blade.baseY - blade.h * 0.5);
-        
-        // Sway response: stronger at top, influenced by height
-        const windForce = wind.vx * 0.9 + wind.vy * 0.3;
-        const targetSway = windForce * (0.6 + blade.h / 55);
-        
-        blade.sway = blade.sway * 0.78 + targetSway * 0.22;
-
-        const sway = blade.sway + Math.sin(time * 2.3 + blade.phase) * 1.4;
-
-        ctx.lineWidth = blade.thickness;
-        ctx.beginPath();
-        
-        let cx = blade.x;
-        let cy = blade.baseY;
-        ctx.moveTo(cx, cy);
-
-        const segs = blade.segments;
-        for (let s = 1; s <= segs; s++) {
-          const t = s / segs;
-          const bend = sway * t * t * (1.0 + t * 0.3); // more bend higher up
-          const len = blade.h / segs;
-          cx += bend * 0.6;
-          cy -= len;
-          ctx.lineTo(cx, cy);
-        }
-        ctx.stroke();
-      }
-      ctx.lineWidth = 1;
-    }
-
-    function drawTree(tree) {
-      const wind = getWindAt(tree.x, GROUND_Y - tree.h * 0.6);
-      const windX = wind.vx * 0.75 + wind.vy * 0.15;
-
-      // Different response by type
-      let amp = 1.0;
-      let freq = 1.6;
-      if (tree.type === 'tall') { amp = 1.35; freq = 0.95; }
-      else if (tree.type === 'medium') { amp = 0.95; freq = 1.35; }
-      else { amp = 0.7; freq = 2.1; }
-
-      const sway = (Math.sin(time * freq + tree.phase) * 2.5 + windX * amp) * 0.7;
-      const topSway = sway * 1.15;
-      const midSway = sway * 0.75;
-
-      // Trunk
-      ctx.strokeStyle = '#3f2a1f';
-      ctx.lineWidth = tree.type === 'tall' ? 6.5 : tree.type === 'medium' ? 4.5 : 3.5;
-      ctx.beginPath();
-      ctx.moveTo(tree.x, GROUND_Y);
-      ctx.quadraticCurveTo(
-        tree.x + midSway * 0.35, GROUND_Y - tree.h * 0.55,
-        tree.x + topSway * 0.55, GROUND_Y - tree.h
-      );
-      ctx.stroke();
-
-      // Foliage layers
-      const foliageColor = tree.type === 'tall' ? '#166534' : '#15803d';
-      ctx.fillStyle = foliageColor;
-
-      const layers = tree.type === 'tall' ? 5 : tree.type === 'medium' ? 4 : 3;
-      for (let i = 0; i < layers; i++) {
-        const ly = GROUND_Y - tree.h * (0.18 + i * 0.18);
-        const lx = tree.x + (i === 0 ? midSway : (i === layers - 1 ? topSway : sway)) * (0.6 + i * 0.12);
-        const r = 18 + (tree.h / 9) * (0.75 + Math.sin(i) * 0.15) - i * 1.5;
-
-        ctx.beginPath();
-        ctx.ellipse(lx, ly, r * 0.9, r * (0.7 + i * 0.05), sway * 0.01, 0, Math.PI * 2);
-        ctx.fill();
-
-        // highlight
-        ctx.fillStyle = '#4ade80';
-        ctx.globalAlpha = 0.18;
-        ctx.beginPath();
-        ctx.ellipse(lx - r * 0.25, ly - r * 0.2, r * 0.45, r * 0.32, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = foliageColor;
-      }
-
-      // top tuft
-      ctx.beginPath();
-      ctx.ellipse(
-        tree.x + topSway * 0.6, GROUND_Y - tree.h - 6, 
-        11, 9, topSway * 0.02, 0, Math.PI * 2
-      );
-      ctx.fill();
-      ctx.lineWidth = 1;
-    }
-
-    function drawHouse(h) {
-      const wind = getWindAt(h.x, GROUND_Y - h.h * 0.3);
-      h.flagSway = h.flagSway * 0.8 + wind.vx * 0.55;
-
-      // Body
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(h.x - h.w / 2, GROUND_Y - h.h, h.w, h.h);
-
-      // Roof
-      ctx.fillStyle = '#1e2937';
-      ctx.beginPath();
-      ctx.moveTo(h.x - h.w / 2 - 6, GROUND_Y - h.h);
-      ctx.lineTo(h.x, GROUND_Y - h.h - h.h * 0.55);
-      ctx.lineTo(h.x + h.w / 2 + 6, GROUND_Y - h.h);
-      ctx.fill();
-
-      // Windows
-      ctx.fillStyle = '#64748b';
-      const winW = 8, winH = 9;
-      ctx.fillRect(h.x - h.w * 0.28, GROUND_Y - h.h * 0.68, winW, winH);
-      ctx.fillRect(h.x + h.w * 0.12, GROUND_Y - h.h * 0.68, winW, winH);
-      if (h.w > 70) {
-        ctx.fillRect(h.x - h.w * 0.28, GROUND_Y - h.h * 0.42, winW, winH);
-      }
-
-      // Door
-      ctx.fillStyle = '#1e2937';
-      ctx.fillRect(h.x - 5, GROUND_Y - 28, 11, 28);
-
-      // Flag / chimney indicator of wind
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = 1.5;
-      const fx = h.x + h.w / 2 + 4;
-      const fy = GROUND_Y - h.h - h.h * 0.35;
-      ctx.beginPath();
-      ctx.moveTo(fx, fy);
-      ctx.quadraticCurveTo(
-        fx + 12 + h.flagSway * 0.8, fy - 2 + h.flagSway * 0.2,
-        fx + 22 + h.flagSway * 1.6, fy + 4 + h.flagSway * 0.6
-      );
-      ctx.stroke();
-      ctx.lineWidth = 1;
-    }
-
-    function drawCloud(c) {
-      const wind = getWindAt(c.x, c.y);
-      // Clouds move slower
-      c.x += wind.vx * 0.035 + (globalWind * 0.022);
-      if (c.x > W + 80) c.x = -90;
-      if (c.x < -90) c.x = W + 80;
-
-      const bob = Math.sin(time * 0.4 + c.phase) * 1.5;
-
-      ctx.fillStyle = 'rgba(226, 232, 240, 0.82)';
-      const s = c.s;
-      
-      ctx.beginPath();
-      ctx.ellipse(c.x, c.y + bob, 26 * s, 11 * s, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(c.x - 18 * s, c.y - 1 + bob, 17 * s, 12 * s, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(c.x + 19 * s, c.y + 1 + bob, 15 * s, 9.5 * s, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(c.x - 5 * s, c.y - 7 + bob, 12 * s, 9 * s, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    function drawWindVisualization() {
-      // Subtle vector field
-      ctx.strokeStyle = 'rgba(163, 163, 172, 0.22)';
-      ctx.lineWidth = 1.0;
-
-      const stepX = 52;
-      const stepY = 44;
-      for (let x = 38; x < W - 20; x += stepX) {
-        for (let y = 55; y < GROUND_Y - 20; y += stepY) {
-          const w = getWindAt(x, y);
-          const len = Math.min(28, Math.hypot(w.vx, w.vy) * 1.4);
-          if (len < 1.5) continue;
-
-          const nx = w.vx / (Math.hypot(w.vx, w.vy) || 1);
-          const ny = w.vy / (Math.hypot(w.vx, w.vy) || 1);
-
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + nx * len, y + ny * len);
-          ctx.stroke();
-
-          // small arrow head
-          const hx = x + nx * len;
-          const hy = y + ny * len;
-          ctx.beginPath();
-          ctx.moveTo(hx, hy);
-          ctx.lineTo(hx - nx * 4 + ny * 2.5, hy - ny * 4 - nx * 2.5);
-          ctx.moveTo(hx, hy);
-          ctx.lineTo(hx - nx * 4 - ny * 2.5, hy - ny * 4 + nx * 2.5);
-          ctx.stroke();
-        }
-      }
-      ctx.lineWidth = 1;
-    }
-
-    function drawEmitters() {
-      for (const e of emitters) {
-        const isSel = selectedEmitter && selectedEmitter.id === e.id;
-        const r = e.type === 'water' ? 7 : 6.5;
-
-        // glow
-        ctx.fillStyle = e.type === 'water' ? 'rgba(56, 189, 248, 0.25)' : 'rgba(52, 211, 153, 0.25)';
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, r * 2.1, 0, Math.PI * 2);
-        ctx.fill();
-
-        // core
-        ctx.fillStyle = e.type === 'water' ? '#38bdf8' : '#34d399';
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (isSel) {
-          ctx.strokeStyle = '#f1f5f9';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(e.x, e.y, r + 4, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.lineWidth = 1;
-        }
-
-        // direction indicator
-        const dirX = Math.cos(e.angle - Math.PI / 2) * 18;
-        const dirY = Math.sin(e.angle - Math.PI / 2) * 18;
-        ctx.strokeStyle = e.type === 'water' ? '#bae6fd' : '#a7f3d0';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(e.x, e.y);
-        ctx.lineTo(e.x + dirX, e.y + dirY);
-        ctx.stroke();
-
-        // arrow head
-        const ax = e.x + dirX;
-        const ay = e.y + dirY;
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(ax - dirX * 0.35 + dirY * 0.45, ay - dirY * 0.35 - dirX * 0.45);
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(ax - dirX * 0.35 - dirY * 0.45, ay - dirY * 0.35 + dirX * 0.45);
-        ctx.stroke();
-        ctx.lineWidth = 1;
-      }
-    }
-
-    function emitFromHoses() {
-      for (const e of emitters) {
-        if (e.type !== 'water') continue;
-
-        const num = 2 + Math.floor(e.power / 1.5);
-        for (let i = 0; i < num; i++) {
-          const spreadRad = (e.spread || 18) * (Math.PI / 180);
-          const jitter = (Math.random() - 0.5) * spreadRad * 1.6;
-          const a = e.angle * (Math.PI / 180) + jitter - Math.PI / 2;
-
-          const speed = e.power * (0.85 + Math.random() * 0.45);
-          const vx0 = Math.cos(a) * speed;
-          const vy0 = Math.sin(a) * speed;
-
-          waterParticles.push({
-            x: e.x + (Math.random() - 0.5) * 3,
-            y: e.y + (Math.random() - 0.5) * 3,
-            vx: vx0,
-            vy: vy0,
-            life: 52 + Math.random() * 28,
-            size: 1.6 + Math.random() * 1.3
-          });
-        }
-      }
-    }
-
-    function updateParticles() {
-      // Water
-      for (let i = waterParticles.length - 1; i >= 0; i--) {
-        const p = waterParticles[i];
-        const w = getWindAt(p.x, p.y);
-
-        // Air drag + wind
-        const drag = 0.048;
-        p.vx += (w.vx * 0.85 - p.vx * 0.6) * drag;
-        p.vy += (w.vy * 0.6 - p.vy * 0.2) * drag;
-
-        // Gravity
-        p.vy += 0.145;
-
-        // slight air resistance
-        p.vx *= 0.993;
-        p.vy *= 0.993;
-
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life -= 1;
-
-        // ground splat / disappear
-        if (p.y > GROUND_Y - 1) {
-          p.life = Math.min(p.life, 4);
-          p.vy = Math.abs(p.vy) * -0.2;
-          p.vx *= 0.3;
-        }
-
-        if (p.life <= 0 || p.x < -30 || p.x > W + 30) {
-          waterParticles.splice(i, 1);
-        }
-      }
-
-      // Wind tracers (visual only)
-      for (let i = windTracers.length - 1; i >= 0; i--) {
-        const t = windTracers[i];
-        const w = getWindAt(t.x, t.y);
-        t.vx = t.vx * 0.88 + w.vx * 0.12;
-        t.vy = t.vy * 0.88 + w.vy * 0.12;
-        t.x += t.vx * 0.65;
-        t.y += t.vy * 0.65;
-        t.life -= 1;
-        if (t.life <= 0) windTracers.splice(i, 1);
-      }
-
-      // Occasionally spawn wind tracers near active emitters
-      if (Math.random() < 0.65 && emitters.length > 0) {
-        const e = emitters[Math.floor(Math.random() * emitters.length)];
-        const spread = (e.spread || 18) * 0.6;
-        const a = (e.angle - 90) * Math.PI / 180;
-        windTracers.push({
-          x: e.x + Math.cos(a) * 6 + (Math.random() - 0.5) * spread,
-          y: e.y + Math.sin(a) * 6 + (Math.random() - 0.5) * spread * 0.6,
-          vx: Math.cos(a) * (e.power * 0.4),
-          vy: Math.sin(a) * (e.power * 0.4),
-          life: 18 + Math.random() * 14
-        });
-      }
-    }
-
-    function drawParticles() {
-      // Water
-      ctx.fillStyle = '#67e8f9';
-      for (const p of waterParticles) {
-        const alpha = Math.max(0.15, Math.min(0.95, p.life / 45));
-        ctx.globalAlpha = alpha;
-        const r = p.size * (0.7 + Math.min(1, p.life / 20) * 0.3);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fill();
-
-        // motion hint
-        if (p.vy > 1.5 || Math.abs(p.vx) > 1.8) {
-          ctx.globalAlpha = alpha * 0.45;
-          ctx.beginPath();
-          ctx.moveTo(p.x - p.vx * 0.18, p.y - p.vy * 0.18);
-          ctx.lineTo(p.x, p.y);
-          ctx.strokeStyle = '#67e8f9';
-          ctx.lineWidth = 1.2;
-          ctx.stroke();
-          ctx.lineWidth = 1;
-        }
-      }
-      ctx.globalAlpha = 1;
-
-      // Wind tracers
-      ctx.strokeStyle = 'rgba(163, 172, 182, 0.45)';
-      ctx.lineWidth = 1.25;
-      for (const t of windTracers) {
-        const a = Math.max(0.1, t.life / 26);
-        ctx.globalAlpha = a;
-        ctx.beginPath();
-        ctx.moveTo(t.x - t.vx * 0.5, t.y - t.vy * 0.5);
-        ctx.lineTo(t.x + t.vx * 0.25, t.y + t.vy * 0.25);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = 1;
-    }
-
-    function draw() {
-      ctx.clearRect(0, 0, W, H);
-
-      drawSky();
-      drawGround();
-
-      // Background elements first
-      for (const c of clouds) drawCloud(c);
-
-      // Trees (back to front)
-      for (const t of trees) {
-        drawTree(t);
-      }
-
-      for (const h of houses) {
-        drawHouse(h);
-      }
-
-      // Grass on top of ground elements
-      drawGrass();
-
-      // Wind field
-      drawWindVisualization();
-
-      // Emitters + particles
-      drawEmitters();
-      drawParticles();
-
-      // Subtle vignette at edges
-      const vg = ctx.createRadialGradient(W/2, H/2, H * 0.55, W/2, H/2 + 40, H * 0.92);
-      vg.addColorStop(0, 'rgba(0,0,0,0)');
-      vg.addColorStop(1, 'rgba(15, 23, 42, 0.35)');
-      ctx.fillStyle = vg;
-      ctx.fillRect(0, 0, W, H);
-    }
-
-    function update() {
-      time += 0.016;
-
-      // Update houses flags from wind
-      for (const h of houses) {
-        const w = getWindAt(h.x + 20, GROUND_Y - h.h * 0.5);
-        h.flagSway = h.flagSway * 0.82 + w.vx * 0.7;
-      }
-
-      // Update trees sway base (real sway calculated in draw)
-      for (const t of trees) {
-        const w = getWindAt(t.x, GROUND_Y - t.h * 0.7);
-        t.sway = t.sway * 0.86 + w.vx * 0.08;
-      }
-
-      // Emit water
-      if (emitters.some(e => e.type === 'water')) {
-        emitFromHoses();
-      }
-
-      updateParticles();
-
-      // Update UI counters
-      document.getElementById('part-val').textContent = waterParticles.length + windTracers.length;
-      document.getElementById('gw-val').textContent = globalWind.toFixed(1);
-    }
-
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
-    }
-
-    // Interaction
-    function canvasToWorld(e) {
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = W / rect.width;
-      const scaleY = H / rect.height;
-      return {
-        x: (e.clientX - rect.left) * scaleX,
-        y: (e.clientY - rect.top) * scaleY
-      };
-    }
-
-    function handlePointerDown(e) {
-      const { x, y } = canvasToWorld(e);
-      const hit = getEmitterAt(x, y);
-
-      if (hit) {
-        selectedEmitter = hit;
-        updateSelectedUI();
-        
-        // Check if starting an angle drag (click near the direction arrow)
-        const dx = x - hit.x;
-        const dy = y - hit.y;
-        const dist = Math.hypot(dx, dy);
-        
-        if (dist > 9 && dist < 38) {
-          // angle drag
-          isSettingAngle = true;
-          angleStartX = x;
-          angleStartY = y;
-        } else {
-          // position drag
-          isDragging = true;
-          dragOffsetX = x - hit.x;
-          dragOffsetY = y - hit.y;
-        }
-      } else {
-        // Create new emitter
-        const useType = (e.shiftKey) ? (mode === 'water' ? 'wind' : 'water') : mode;
-        const newE = createEmitter(x, y, useType);
-        emitters.push(newE);
-        selectedEmitter = newE;
-        updateSelectedUI();
-        
-        // Start dragging the new one immediately
-        isDragging = true;
-        dragOffsetX = 0;
-        dragOffsetY = 0;
-      }
-    }
-
-    function handlePointerMove(e) {
-      const { x, y } = canvasToWorld(e);
-
-      if (isDragging && selectedEmitter) {
-        selectedEmitter.x = Math.max(20, Math.min(W - 20, x - dragOffsetX));
-        selectedEmitter.y = Math.max(35, Math.min(GROUND_Y - 3, y - dragOffsetY));
-        updateSelectedUI();
-      }
-
-      if (isSettingAngle && selectedEmitter) {
-        const dx = x - selectedEmitter.x;
-        const dy = y - selectedEmitter.y;
-        let ang = Math.atan2(dy, dx) * (180 / Math.PI) + 90; // convert to our "0 = up" convention
-        ang = Math.max(-90, Math.min(90, ang));
-        selectedEmitter.angle = ang;
-        syncUIFromEmitter();
-        updateSelectedUI();
-      }
-    }
-
-    function handlePointerUp() {
-      isDragging = false;
-      isSettingAngle = false;
-    }
-
-    function handleClick(e) {
-      // click without drag handled in down already for creation
-    }
-
-    function setupControls() {
-      // Global wind
-      const gw = document.getElementById('global-wind');
-      gw.addEventListener('input', () => {
-        globalWind = parseFloat(gw.value);
-      });
-
-      // Mode buttons
-      const mw = document.getElementById('mode-water');
-      const mwi = document.getElementById('mode-wind');
-      function setMode(m) {
-        mode = m;
-        document.getElementById('mode-val').textContent = m === 'water' ? 'water + wind' : 'wind';
-        mw.classList.toggle('bg-sky-600', m === 'water');
-        mw.classList.toggle('bg-slate-700', m !== 'water');
-        mwi.classList.toggle('bg-emerald-600', m === 'wind');
-        mwi.classList.toggle('bg-slate-700', m !== 'wind');
-      }
-      mw.addEventListener('click', () => setMode('water'));
-      mwi.addEventListener('click', () => setMode('wind'));
-      setMode('water');
-
-      // Emitter sliders
-      const power = document.getElementById('power');
-      const angle = document.getElementById('angle');
-      const spread = document.getElementById('spread');
-
-      [power, angle, spread].forEach(el => {
-        el.addEventListener('input', () => {
-          updateEmitterFromUI();
-          updateEmitterValueLabels();
-        });
-      });
-
-      power.addEventListener('input', updateEmitterValueLabels);
-      angle.addEventListener('input', updateEmitterValueLabels);
-      spread.addEventListener('input', updateEmitterValueLabels);
-
-      // Delete
-      document.getElementById('delete-emitter').addEventListener('click', () => {
-        if (!selectedEmitter) return;
-        emitters = emitters.filter(e => e.id !== selectedEmitter.id);
-        selectedEmitter = null;
-        updateSelectedUI();
-      });
-
-      // Pulse: temporary boost
-      document.getElementById('pulse-emitter').addEventListener('click', () => {
-        if (!selectedEmitter) return;
-        const orig = selectedEmitter.power;
-        selectedEmitter.power = Math.min(9.5, orig * 2.6);
-        setTimeout(() => {
-          if (selectedEmitter) selectedEmitter.power = orig;
-        }, 380);
-      });
-
-      // Quick actions
-      document.getElementById('clear-water').addEventListener('click', () => {
-        waterParticles = [];
-      });
-
-      document.getElementById('add-example').addEventListener('click', () => {
-        addExampleSetup();
-      });
-
-      document.getElementById('reset-all').addEventListener('click', () => {
-        resetScene();
-      });
-
-      // Keyboard shortcuts
-      window.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') {
-          selectedEmitter = null;
-          updateSelectedUI();
-        }
-        if (ev.key.toLowerCase() === 'w') setMode('wind');
-        if (ev.key.toLowerCase() === 'j' || ev.key.toLowerCase() === 'h') setMode('water');
-        if (ev.key === 'Delete' || ev.key === 'Backspace') {
-          if (selectedEmitter) {
-            emitters = emitters.filter(e => e.id !== selectedEmitter.id);
-            selectedEmitter = null;
-            updateSelectedUI();
-          }
-        }
-        if (ev.key === ' ' && selectedEmitter) {
-          ev.preventDefault();
-          const orig = selectedEmitter.power;
-          selectedEmitter.power = Math.min(9.5, orig * 2.8);
-          setTimeout(() => { if (selectedEmitter) selectedEmitter.power = orig; }, 420);
-        }
-      });
-
-      // Value label live update
-      ['power', 'angle', 'spread'].forEach(id => {
-        const el = document.getElementById(id);
-        el.addEventListener('input', updateEmitterValueLabels);
-      });
-      // initial labels
-      updateEmitterValueLabels();
-    }
-
-    function setupCanvasListeners() {
-      canvas.addEventListener('pointerdown', handlePointerDown);
-      canvas.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerup', handlePointerUp);
-      canvas.addEventListener('click', handleClick);
-
-      // Prevent context menu on right click for nicer UX
-      canvas.addEventListener('contextmenu', e => {
-        e.preventDefault();
-        const { x, y } = canvasToWorld(e);
-        const hit = getEmitterAt(x, y);
-        if (hit) {
-          // quick delete on right click
-          emitters = emitters.filter(e => e.id !== hit.id);
-          if (selectedEmitter && selectedEmitter.id === hit.id) {
-            selectedEmitter = null;
-            updateSelectedUI();
-          }
-        } else {
-          // right click = quick wind emitter
-          const ne = createEmitter(x, y, 'wind');
-          emitters.push(ne);
-          selectedEmitter = ne;
-          updateSelectedUI();
-        }
-      });
-
-      // Bonus: mouse move creates temporary wind influence when no emitter selected
-      let lastMouse = {x: W/2, y: GROUND_Y - 80};
-      canvas.addEventListener('pointermove', (e) => {
-        const { x, y } = canvasToWorld(e);
-        lastMouse = {x, y};
-      });
-    }
-
-    function init() {
-      initTailwind();
-      initGrass();
-      initTrees();
-      initHouses();
-      initClouds();
-
-      // Start with one water emitter to demonstrate immediately
-      emitters.push({
-        id: 1,
-        type: 'water',
-        x: 120,
-        y: GROUND_Y - 35,
-        angle: -18,
-        power: 3.3,
-        spread: 15,
-        radius: 270
-      });
-      selectedEmitter = emitters[0];
-
-      setupControls();
-      setupCanvasListeners();
-      updateSelectedUI();
-
-      // Seed a few wind tracers
-      for (let i = 0; i < 12; i++) {
-        windTracers.push({
-          x: 80 + Math.random() * 200,
-          y: 120 + Math.random() * 180,
-          vx: (Math.random() - 0.3) * 1.8,
-          vy: Math.random() * 0.6,
-          life: 30 + Math.random() * 20
-        });
-      }
-
-      // Boot
-      loop();
-
-      // Auto-demo pulse after a moment
-      setTimeout(() => {
-        if (emitters.length > 0 && emitters[0].type === 'water') {
-          const e0 = emitters[0];
-          const orig = e0.power;
-          e0.power = 5.8;
-          setTimeout(() => { if (e0) e0.power = orig; }, 650);
-        }
-      }, 1600);
-
-      // Helpful console note
-      console.log('%c[wind_manager] Ready. Try different emitter arrangements. Strong upward water on the left shakes the tall tree.', 'color:#64748b');
-    }
-
-    window.onload = init;
-  </script>
+  <script type="module" src="main.js"></script>
 </body>
 </html>
