@@ -12,17 +12,14 @@ export interface Droplets {
 export function createDroplets(device: GPUDevice, p: Params): Droplets {
   const usage =
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const max = p.maxDroplets;
+  const pool = device.createBuffer({ size: max * DROPLET_STRIDE, usage });
+  const counter = device.createBuffer({ size: 4, usage });
 
-  const d: any = {
-    max: p.maxDroplets,
-    pool: device.createBuffer({ size: p.maxDroplets * DROPLET_STRIDE, usage }),
-    counter: device.createBuffer({ size: 4, usage }),
+  const reset = (queue: GPUQueue): void => {
+    queue.writeBuffer(pool, 0, new ArrayBuffer(max * DROPLET_STRIDE));
+    queue.writeBuffer(counter, 0, new Uint32Array(1));
   };
 
-  d.reset = (queue: GPUQueue) => {
-    queue.writeBuffer(d.pool, 0, new ArrayBuffer(p.maxDroplets * DROPLET_STRIDE));
-    queue.writeBuffer(d.counter, 0, new Uint32Array(1));
-  };
-
-  return d as unknown as Droplets;
+  return { max, pool, counter, reset };
 }

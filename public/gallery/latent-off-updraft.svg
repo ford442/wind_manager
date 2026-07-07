@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" role="img" aria-label="Latent heat off: momentum-only updraft">
+  <rect width="320" height="120" fill="#060a0f"/>
+  <rect x="0" y="100" width="320" height="20" fill="#1a2e1a"/>
+  <path d="M32 100 Q32 70 32 35 Q32 18 32 8" stroke="#fbbf24" stroke-width="3" fill="none"/>
+  <path d="M26 90 L32 70 L38 90" stroke="#fbbf24" stroke-width="1.5" fill="none" opacity="0.7"/>
+  <path d="M26 75 L32 55 L38 75" stroke="#fbbf24" stroke-width="1.5" fill="none" opacity="0.5"/>
+  <circle cx="32" cy="100" r="3" fill="#38bdf8"/>
+  <text x="48" y="40" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">warm spray momentum</text>
+  <text x="48" y="52" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">no evaporative cooling</text>
+  <text x="8" y="14" fill="#dbe4ee" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="600">Latent heat OFF</text>
+</svg>

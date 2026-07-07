@@ -1,6 +1,7 @@
 import type { Params } from '../sim/params';
 import type { VelSampler } from './velSampler';
 import { LAYOUT, sceneX } from './sceneLayout';
+import { lowPass, SCENE_COLORS, worldToPx } from './sceneCanvas';
 
 interface Tree {
   xFrac: number;
@@ -27,15 +28,12 @@ export function createTreesLayer(overlay: HTMLCanvasElement): TreesLayer {
     foliageSway: 0,
   }));
 
-  function worldToPx(x: number, y: number, p: Params): [number, number] {
-    const px = (x / p.domainW) * overlay.width;
-    const py = (1 - y / p.domainH) * overlay.height;
-    return [px, py];
+  function worldToPxLocal(x: number, y: number, p: Params): [number, number] {
+    return worldToPx(x, y, p, overlay.width, overlay.height);
   }
 
-  function lowPass(state: number, target: number, tau: number, dt: number): number {
-    const a = 1 - Math.exp(-dt / Math.max(0.05, tau));
-    return state + (target - state) * a;
+  function lowPassLocal(state: number, target: number, tau: number, dt: number): number {
+    return lowPass(state, target, tau, dt);
   }
 
   function drawTree(tree: Tree, p: Params): void {
@@ -46,10 +44,10 @@ export function createTreesLayer(overlay: HTMLCanvasElement): TreesLayer {
     const topSway = foliageSway * 1.18;
     const midSway = trunkSway * 0.72 + foliageSway * 0.35;
 
-    const [groundPx, groundY] = worldToPx(groundX, 0, p);
+    const [groundPx, groundY] = worldToPxLocal(groundX, 0, p);
     const trunkW = (tree.depth > 0.85 ? 7 : tree.depth > 0.7 ? 5.5 : 4) * tree.depth;
 
-    ctx.strokeStyle = '#3f2a1f';
+    ctx.strokeStyle = SCENE_COLORS.trunk;
     ctx.lineWidth = trunkW;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -63,7 +61,7 @@ export function createTreesLayer(overlay: HTMLCanvasElement): TreesLayer {
     ctx.stroke();
 
     const layers = tree.height > 4.2 ? 5 : tree.height > 3.2 ? 4 : 3;
-    const foliageBase = tree.depth > 0.85 ? '#166534' : '#15803d';
+    const foliageBase = tree.depth > 0.85 ? SCENE_COLORS.foliage : SCENE_COLORS.foliageMid;
     ctx.fillStyle = foliageBase;
 
     for (let i = 0; i < layers; i++) {
@@ -77,7 +75,7 @@ export function createTreesLayer(overlay: HTMLCanvasElement): TreesLayer {
       ctx.ellipse(lx, ly, r * 0.92, r * (0.68 + t * 0.08), layerSway * 0.008, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = 'rgba(74, 222, 128, 0.16)';
+      ctx.fillStyle = SCENE_COLORS.foliageHi;
       ctx.beginPath();
       ctx.ellipse(lx - r * 0.22, ly - r * 0.18, r * 0.42, r * 0.3, 0, 0, Math.PI * 2);
       ctx.fill();
@@ -113,13 +111,13 @@ export function createTreesLayer(overlay: HTMLCanvasElement): TreesLayer {
         const gust = windX * tree.windAmp * swayScale;
         const idle = Math.sin(simTime * 1.35 + tree.phase) * swayScale * 0.35;
 
-        tree.trunkSway = lowPass(
+        tree.trunkSway = lowPassLocal(
           tree.trunkSway,
           gust * 0.42 + idle * 0.25,
           tree.trunkTau,
           dt,
         );
-        tree.foliageSway = lowPass(
+        tree.foliageSway = lowPassLocal(
           tree.foliageSway,
           gust * 1.15 + idle * 0.9 + Math.sin(simTime * 2.4 + tree.phase * 1.7) * swayScale * 0.2,
           tree.foliageTau,

@@ -90,10 +90,22 @@ export function findEmitterAt(p: Params, wx: number, wy: number, hit = 0.2): Emi
   return best;
 }
 
+export const EMITTER_MARGIN = 0.12;
+
+export function emitterPositionBounds(p: Params): {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+} {
+  const m = EMITTER_MARGIN;
+  return { xMin: m, xMax: p.domainW - m, yMin: m, yMax: p.domainH - m };
+}
+
 export function clampEmitterPosition(em: Emitter, p: Params): void {
-  const m = 0.12;
-  em.x = Math.max(m, Math.min(p.domainW - m, em.x));
-  em.y = Math.max(m, Math.min(p.domainH - m, em.y));
+  const { xMin, xMax, yMin, yMax } = emitterPositionBounds(p);
+  em.x = Math.max(xMin, Math.min(xMax, em.x));
+  em.y = Math.max(yMin, Math.min(yMax, em.y));
 }
 
 export function emitDirection(em: Emitter): [number, number] {

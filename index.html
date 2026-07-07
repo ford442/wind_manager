@@ -13,26 +13,89 @@
     body {
       margin: 0; padding: 16px; background: var(--bg); color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      -webkit-text-size-adjust: 100%;
     }
     .wrap { max-width: 1600px; margin: 0 auto; }
+    .app-nav {
+      display: flex; gap: 4px; margin-bottom: 12px; padding: 4px;
+      background: #0d1520; border: 1px solid var(--border); border-radius: 10px;
+      width: fit-content; max-width: 100%; flex-wrap: wrap;
+    }
+    .app-nav a {
+      padding: 9px 16px; border-radius: 7px; font-size: 13px; font-weight: 600;
+      text-decoration: none; color: var(--muted); border: 1px solid transparent;
+      line-height: 1.25;
+    }
+    .app-nav a small {
+      display: block; font-size: 10px; font-weight: 400; opacity: 0.85; margin-top: 2px;
+    }
+    .app-nav a:hover { color: var(--text); background: #17222f; }
+    .app-nav a.active {
+      color: #06202e; background: var(--accent); border-color: var(--accent);
+    }
+    .app-nav a.active small { color: #0c3d52; opacity: 0.9; }
+    .app-nav a.playground { border-color: #14532d; }
+    .app-nav a.playground:not(.active) { color: #6ee7b7; }
+    .app-nav a.playground:not(.active) small { color: #4ade80; opacity: 0.75; }
+    .header-meta { font-size: 11px; color: var(--muted); text-align: right; max-width: 280px; line-height: 1.45; }
+    .playground-banner {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      font-size: 12px; color: var(--muted); line-height: 1.45;
+      padding: 10px 12px; background: linear-gradient(90deg, #0d1520, #0f1a14);
+      border: 1px solid #14532d; border-radius: 10px; margin-top: 10px;
+    }
+    .playground-banner strong { color: #6ee7b7; }
+    .playground-banner p { margin: 0; flex: 1 1 240px; }
+    .playground-banner .btn-playground {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+      text-decoration: none; color: #052e16; background: #4ade80; border: 1px solid #22c55e;
+      white-space: nowrap;
+    }
+    .playground-banner .btn-playground:hover { background: #6ee7b7; }
+    .canvas-toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      margin-top: 8px; padding: 8px 10px; background: #0d1520; border: 1px solid var(--border);
+      border-radius: 8px; font-size: 12px;
+    }
+    .canvas-toolbar .toggle-row { margin: 0; }
+    .canvas-toolbar a {
+      font-size: 11px; text-decoration: none; padding: 5px 10px; border-radius: 6px;
+      border: 1px solid #14532d; color: #6ee7b7; background: #0f1a14;
+    }
+    .canvas-toolbar a:hover { background: #14261c; color: #86efac; }
+    .workflow-steps {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 0;
+    }
+    .workflow-steps div {
+      padding: 8px; background: #0a1218; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 10px; line-height: 1.45;
+    }
+    .workflow-steps strong { display: block; color: var(--text); font-size: 11px; margin-bottom: 3px; }
+    @media (max-width: 720px) {
+      .workflow-steps { grid-template-columns: 1fr; }
+    }
     header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
     h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
-    header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; max-width: 52em; }
     .layout { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
-    .canvas-col { flex: 1 1 640px; min-width: 320px; }
+    .canvas-col { flex: 1 1 640px; min-width: 0; }
     .canvas-wrap {
       position: relative; width: 100%; aspect-ratio: 4 / 1;
+      min-height: 140px;
+      max-height: min(42vh, 360px);
       border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
       background: #060a0f;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .canvas-wrap canvas {
+      position: absolute; inset: 0;
       display: block; width: 100%; height: 100%;
     }
-    #c { touch-action: none; }
-    #grass-overlay {
-      position: absolute; left: 0; top: 0; width: 100%; height: 100%;
-      pointer-events: none;
-    }
+    #c { touch-action: none; cursor: crosshair; }
+    #grass-overlay { pointer-events: none; }
     .panel {
       width: 300px; flex: 0 0 300px; background: var(--panel);
       border: 1px solid var(--border); border-radius: 12px; padding: 14px;
@@ -78,11 +141,36 @@
     .emitter-item:hover { background: #1d2b3b; }
     .emitter-item.active { border-color: var(--accent); color: var(--accent); }
     #emitter-selected-info { font-size: 11px; color: var(--muted); margin-bottom: 8px; line-height: 1.4; }
+    .emit-pos { margin-bottom: 12px; }
+    #emit-pos-readout {
+      font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent);
+      margin-bottom: 8px; padding: 5px 8px; background: #0d1520; border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .pos-row {
+      display: grid; grid-template-columns: 14px 72px 1fr; gap: 6px; align-items: center;
+      margin-bottom: 6px; font-size: 12px;
+    }
+    .pos-row label { color: var(--muted); font-size: 11px; font-weight: 600; }
+    .pos-row input[type=number] {
+      width: 100%; background: #17222f; color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 6px; font-size: 12px; font-family: ui-monospace, monospace;
+    }
+    .pos-row input[type=number]:focus { outline: none; border-color: var(--accent); }
+    .pos-row input[type=number]:disabled { opacity: 0.45; }
+    .pos-hint { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
     select {
       width: 100%; background: #17222f; color: var(--text); border: 1px solid var(--border);
       border-radius: 8px; padding: 7px 8px; font-size: 12px; margin-bottom: 8px;
     }
-    #preset-hint { margin-top: 6px; margin-bottom: 0; }
+    #share-json {
+      width: 100%; margin-top: 8px; background: #0d1520; color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+      font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.4;
+      resize: vertical; min-height: 72px;
+    }
+    #share-json:focus { outline: none; border-color: var(--accent); }
+    #share-status { margin-top: 6px; margin-bottom: 0; }
     details.advanced-section { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
     details.advanced-section summary {
       cursor: pointer; font-size: 11px; letter-spacing: 0.08em; color: var(--muted);
@@ -96,17 +184,95 @@
       min-height: 1.2em; margin: 8px 0;
     }
     #advanced-warnings.has-warn { color: #fbbf24; }
+    details.help-section {
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      margin-bottom: 10px; background: #0d1520;
+    }
+    details.help-section summary {
+      cursor: pointer; font-size: 11px; letter-spacing: 0.08em; color: var(--muted);
+      text-transform: uppercase; list-style: none;
+    }
+    details.help-section summary::-webkit-details-marker { display: none; }
+    details.help-section[open] summary { margin-bottom: 8px; color: var(--accent); }
+    .help-body { font-size: 11px; color: var(--muted); line-height: 1.55; }
+    .help-body h3 {
+      margin: 10px 0 4px; font-size: 11px; color: var(--text); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .help-body h3:first-child { margin-top: 0; }
+    .help-body p { margin: 0 0 6px; }
+    .help-body ul { margin: 0 0 8px; padding-left: 16px; }
+    .help-body li { margin-bottom: 3px; }
+    .help-gallery {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px;
+    }
+    .help-gallery button {
+      padding: 0; overflow: hidden; border-radius: 6px; line-height: 0;
+      background: #060a0f;
+    }
+    .help-gallery button img { width: 100%; height: auto; display: block; }
+    .help-gallery span {
+      display: block; padding: 4px 6px; font-size: 9px; text-align: left;
+      line-height: 1.3; color: var(--muted);
+    }
+    [data-tip] { cursor: help; }
+    @media (max-width: 720px) {
+      body { padding: 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+      h1 { font-size: 18px; }
+      header p { font-size: 12px; }
+      .layout { gap: 10px; }
+      .canvas-col { flex: 1 1 100%; min-width: 0; }
+      .canvas-wrap {
+        min-height: 152px;
+        max-height: min(38vh, 220px);
+      }
+      .panel {
+        width: 100%;
+        flex: 1 1 100%;
+        padding: 12px;
+      }
+      .help-gallery { grid-template-columns: 1fr 1fr; }
+      .pos-row { grid-template-columns: 14px 64px 1fr; }
+      button { min-height: 36px; padding: 8px 10px; }
+    }
+    @media (max-width: 720px) {
+      .help-body .hint-touch { display: list-item; }
+    }
+    @media (min-width: 721px) {
+      .help-body .hint-touch { display: none; }
+    }
+    .hint-touch { display: none; }
+    @media (max-width: 720px) {
+      .hint .hint-touch { display: inline; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <div>
+      <div style="flex:1;min-width:200px">
+        <nav class="app-nav" aria-label="App mode">
+          <a href="./" class="active" aria-current="page">
+            Physics sim
+            <small>WebGPU fields · latent heat · shareable</small>
+          </a>
+          <a href="prototype.html" class="playground">
+            Art playground
+            <small>Instant canvas · drag emitters · no GPU</small>
+          </a>
+        </nav>
         <h1>wind_manager — evaporative downdraft</h1>
         <p>Two-way coupled air ⇄ droplet ⇄ temperature solver (WebGPU). A fine spray cools the air it rises through; the cooled column sinks and spreads along the floor as an outflow gust.</p>
+        <div class="playground-banner">
+          <p>
+            <strong>Art playground</strong> — the legacy 2D canvas toy for quick composition: drag water/wind emitters, watch grass and trees sway instantly. No WebGPU, no build step. Sketch layouts there, then reproduce here with real physics.
+          </p>
+          <a href="prototype.html" class="btn-playground">Open art playground →</a>
+        </div>
       </div>
-      <div style="font-size:11px;color:var(--muted);text-align:right">
-        legacy canvas prototype: <a href="prototype.html">prototype.html</a>
+      <div class="header-meta">
+        <a href="https://github.com/ford442/wind_manager#readme" title="Full documentation on GitHub">Documentation</a>
+        · shared layout in <code style="font-size:10px">src/render/sceneData.ts</code>
       </div>
     </header>
 
@@ -115,17 +281,95 @@
     <div class="layout">
       <div class="canvas-col">
         <div class="canvas-wrap">
-          <canvas id="c" width="1280" height="320"></canvas>
-          <canvas id="grass-overlay" width="1280" height="320"></canvas>
+          <canvas id="c"></canvas>
+          <canvas id="grass-overlay"></canvas>
+        </div>
+        <div class="canvas-toolbar">
+          <div class="toggle-row" title="Composite painterly sky, grass, trees from the art playground on top of physics overlays">
+            <input type="checkbox" id="stylized-view" checked>
+            <span><strong>Stylized view</strong> — playground scene on physics</span>
+          </div>
+          <a href="prototype.html" title="Open the legacy canvas art playground">Art playground ↗</a>
         </div>
         <div class="hint">
           <strong>Wide yard (32 m):</strong> click for water spray, Shift+click for <strong>air stream</strong>.
-          The default domain is four times wider than before so downdrafts can travel ~100 ft to distant trees.
+          <span class="hint-touch">On touch: <strong>double-tap</strong> empty canvas for air stream.</span>
+          Drag emitters to move; drag the ring or handle to aim.
           Load the <strong>100 ft tree shake</strong> preset and watch flow tracers ride the floor outflow.
         </div>
       </div>
 
       <div class="panel">
+        <details class="help-section" id="help-panel">
+          <summary>Help — controls &amp; physics</summary>
+          <div class="help-body">
+            <h3>Quick start</h3>
+            <p>Load a <strong>preset</strong>, watch the <strong>temperature</strong> overlay (blue = cooled sinking air), then try toggling <strong>latent heat</strong> OFF to see momentum-only updraft.</p>
+            <ul>
+              <li><strong>Click canvas</strong> — place water spray</li>
+              <li><strong>Shift+click</strong> — air stream (momentum only)</li>
+              <li class="hint-touch"><strong>Double-tap</strong> (touch) — air stream on empty canvas</li>
+              <li><strong>Drag emitter</strong> — move; drag ring/handle — aim</li>
+              <li><strong>Space / Burst</strong> — short high-rate spray on selected emitter (or all)</li>
+              <li><strong>Share → Copy link</strong> — bookmark exact setup</li>
+            </ul>
+
+            <h3>Two apps, one yard</h3>
+            <div class="workflow-steps">
+              <div>
+                <strong>1 · Art playground</strong>
+                Drag emitters, tune power/angle, watch grass &amp; trees react instantly. No GPU. Same tree/house layout as this sim.
+              </div>
+              <div>
+                <strong>2 · Physics sim</strong>
+                Toggle <strong>Stylized view</strong> for the painterly look driven by real velocity fields. Use temperature/humidity overlays to see <em>why</em> things move.
+              </div>
+              <div>
+                <strong>3 · Share &amp; refine</strong>
+                Copy emitter X/Y from Share panel or load a preset. Both apps use the same 32&nbsp;m yard fractions from <code>sceneData.ts</code>.
+              </div>
+            </div>
+            <p style="margin-top:8px"><a href="prototype.html">Open art playground →</a> for quick experiments, then return here for reproducible downdraft physics.</p>
+
+            <h3>Overlays</h3>
+            <ul>
+              <li><strong>None</strong> — scene only (grass, trees, houses)</li>
+              <li><strong>Velocity</strong> — speed magnitude + optional arrows</li>
+              <li><strong>Temperature</strong> — warm spray / cold downdraft (default)</li>
+              <li><strong>Humidity</strong> — moisture field; ground band shows accumulated deposition when enabled</li>
+              <li><strong>Moisture</strong> — dedicated ground view: puddle + vapor stain map (persists after spray stops)</li>
+              <li><strong>Droplets</strong> — Lagrangian spray particles</li>
+              <li><strong>Flow tracers</strong> — passive markers riding the wind; enable streaks for paths</li>
+            </ul>
+
+            <h3>Latent heat</h3>
+            <p>When ON, evaporating droplets cool the air (latent heat). Cooled air sinks via virtual-temperature buoyancy → <strong>downdraft</strong> and floor outflow. When OFF, spray momentum still pushes air up but no cooling → <strong>updraft</strong>.</p>
+
+            <h3>Emitters</h3>
+            <p><strong>Water</strong> — droplets, humidity, evaporative cooling. <strong>Air stream</strong> — pure momentum, no mass or latent heat. Use numeric X/Y fields for exact positions (meters). Press <strong>Space</strong> or <strong>Burst</strong> for a short high-rate pulse — great with latent heat ON/OFF comparisons.</p>
+
+            <h3>Try these presets</h3>
+            <div class="help-gallery">
+              <button type="button" data-preset="vertical-hose-left" title="Load vertical hose preset">
+                <img src="/gallery/downdraft-column.svg" alt="" width="140" height="52">
+                <span>Vertical hose</span>
+              </button>
+              <button type="button" data-preset="latent-off" title="Load latent-off preset">
+                <img src="/gallery/latent-off-updraft.svg" alt="" width="140" height="52">
+                <span>Latent OFF</span>
+              </button>
+              <button type="button" data-preset="tree-shake" title="Load tree shake preset">
+                <img src="/gallery/tree-shake.svg" alt="" width="140" height="52">
+                <span>Tree shake</span>
+              </button>
+              <button type="button" data-preset="dual-hose" title="Load twin hoses preset">
+                <img src="/gallery/dual-hose.svg" alt="" width="140" height="52">
+                <span>Twin hoses</span>
+              </button>
+            </div>
+          </div>
+        </details>
+
         <div class="section">
           <div class="label">Presets</div>
           <select id="preset-select" aria-label="Simulation preset"></select>
@@ -136,9 +380,25 @@
         </div>
 
         <div class="section">
+          <div class="label">Share / reproducibility</div>
+          <div class="btn-row">
+            <button id="share-export" type="button">Export JSON</button>
+            <button id="share-copy" type="button">Copy JSON</button>
+            <button id="share-link" type="button">Copy link</button>
+          </div>
+          <div class="btn-row" style="margin-top:6px">
+            <button id="share-import-btn" type="button">Import JSON</button>
+            <button id="share-file-btn" type="button">From file</button>
+            <input type="file" id="share-file" accept=".json,application/json" hidden>
+          </div>
+          <textarea id="share-json" spellcheck="false" placeholder="Paste JSON configuration here, then Import…"></textarea>
+          <div id="share-status" class="hint"></div>
+        </div>
+
+        <div class="section">
           <div class="label">Latent heat (evaporative cooling)</div>
-          <div class="toggle-row">
-            <input type="checkbox" id="latent-toggle" checked>
+          <div class="toggle-row" title="When ON, evaporation cools air and drives downdraft. OFF = momentum-only updraft.">
+            <input type="checkbox" id="latent-toggle" checked title="Toggle evaporative cooling (latent heat)">
             <span id="latent-state">ON — evaporative cooling → downdraft</span>
           </div>
         </div>
@@ -146,18 +406,23 @@
         <div class="section">
           <div class="label">Overlay</div>
           <div class="btn-row">
-            <button id="ov-none">None</button>
-            <button id="ov-vel">Velocity</button>
-            <button id="ov-temp" class="active">Temperature</button>
-            <button id="ov-hum">Humidity</button>
+            <button id="ov-none" title="Hide field overlay — show backyard scene only">None</button>
+            <button id="ov-vel" title="Color by wind speed; enable arrows below">Velocity</button>
+            <button id="ov-temp" class="active" title="Temperature field — blue cold downdraft, warm spray column">Temperature</button>
+            <button id="ov-hum" title="Relative humidity field + ground moisture band">Humidity</button>
+            <button id="ov-moisture" title="Ground moisture — accumulated vapor stain + puddles along the floor">Moisture</button>
+          </div>
+          <div class="toggle-row" style="margin-top:8px;margin-bottom:6px">
+            <input type="checkbox" id="show-ground-moisture" checked>
+            <span title="Darken ground band by puddle + deposited humidity (humidity / moisture overlays)">Ground moisture layer</span>
           </div>
           <div class="checks">
-            <label><input type="checkbox" id="show-arrows" checked> arrows</label>
-            <label><input type="checkbox" id="show-droplets" checked> droplets</label>
+            <label title="Small arrows showing local wind direction on the grid"><input type="checkbox" id="show-arrows" checked> arrows</label>
+            <label title="Lagrangian water droplets from spray emitters"><input type="checkbox" id="show-droplets" checked> droplets</label>
           </div>
           <div class="checks" style="margin-top:8px">
-            <label><input type="checkbox" id="show-tracers" checked> flow tracers</label>
-            <label><input type="checkbox" id="show-tracer-streaks" checked> streaks</label>
+            <label title="Passive particles advected with the flow — ride floor outflow"><input type="checkbox" id="show-tracers" checked> flow tracers</label>
+            <label title="Draw tracer path history as streaks"><input type="checkbox" id="show-tracer-streaks" checked> streaks</label>
           </div>
           <div class="slider" style="margin-top:10px">
             <div class="row"><span>Tracer density</span><span id="tracer-density-val"></span></div>
@@ -177,6 +442,38 @@
             <button id="add-water" type="button">+ Water</button>
             <button id="add-air" type="button">+ Air stream</button>
             <button id="remove-emitter" type="button">Remove</button>
+          </div>
+          <div class="label" style="margin-top:4px">Spray burst</div>
+          <div class="btn-row" style="margin-bottom:6px">
+            <button id="emit-burst" type="button" title="Short high-rate burst (Space) — selected emitter, or all if none selected">Burst (Space)</button>
+          </div>
+          <div class="slider">
+            <div class="row"><span>Burst duration</span><span id="burst-duration-val"></span></div>
+            <input type="range" id="burst-duration" min="0.1" max="3" step="0.05" value="0.5">
+          </div>
+          <div class="slider">
+            <div class="row"><span>Burst multiplier</span><span id="burst-multiplier-val"></span></div>
+            <input type="range" id="burst-multiplier" min="2" max="30" step="1" value="8">
+          </div>
+          <div id="burst-status" class="hint" style="margin-top:0;margin-bottom:10px"></div>
+          <div class="slider emit-pos">
+            <div class="row"><span>World position</span><span id="emit-pos-domain"></span></div>
+            <div id="emit-pos-readout">—</div>
+            <div class="pos-row">
+              <label for="emit-x">X</label>
+              <input type="number" id="emit-x" step="0.01" disabled aria-label="Emitter X (meters)">
+              <input type="range" id="emit-x-slider" step="0.05" disabled aria-label="Emitter X slider">
+            </div>
+            <div class="pos-row">
+              <label for="emit-y">Y</label>
+              <input type="number" id="emit-y" step="0.01" disabled aria-label="Emitter Y (meters)">
+              <input type="range" id="emit-y-slider" step="0.05" disabled aria-label="Emitter Y slider">
+            </div>
+            <div class="btn-row" style="margin-top:2px">
+              <button id="emit-pos-copy" type="button" disabled>Copy position</button>
+              <button id="emit-arr-copy" type="button" disabled>Copy all</button>
+            </div>
+            <div class="pos-hint">Type exact meters · ↑↓←→ nudge 0.01 m · Shift+arrows 0.1 m</div>
           </div>
           <div class="slider">
             <div class="row"><span>Speed</span><span id="emit-speed-val"></span></div>
@@ -228,7 +525,7 @@
           </div>
           <div class="toggle-row" style="margin-bottom:10px">
             <input type="checkbox" id="show-wet-ground" checked>
-            <span>Wet ground (puddle band)</span>
+            <span>Wet ground (puddle band + sheen)</span>
           </div>
           <div class="slider">
             <div class="row"><span>Grass density</span><span id="grass-density-val"></span></div>
@@ -255,8 +552,8 @@
         <div class="section">
           <div class="label">Simulation</div>
           <div class="btn-row">
-            <button id="pause">Pause</button>
-            <button id="reset">Reset</button>
+            <button id="pause" title="Pause / resume simulation time">Pause</button>
+            <button id="reset" title="Reset fields to ambient — keep current settings">Reset</button>
           </div>
           <details class="advanced-section" id="advanced-section">
             <summary>Advanced — grid &amp; solver</summary>

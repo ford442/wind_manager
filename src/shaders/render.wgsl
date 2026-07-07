@@ -13,6 +13,7 @@ struct RParams {
   tracer_life : f32,
   show_tracers: f32,
   show_streaks: f32,
+  show_ground_moisture : f32,
 };
 
 struct EmitterVis {
@@ -33,6 +34,7 @@ struct EmitterVis {
 @group(0) @binding(5) var<storage, read> emitters : array<EmitterVis>;
 @group(0) @binding(6) var<storage, read> wet : array<f32>;
 @group(0) @binding(7) var<storage, read> tracers : array<Tracer>;
+@group(0) @binding(8) var<storage, read> q_dep : array<f32>;
 
 fn world_to_clip(p: vec2f) -> vec2f {
   let dom = vec2f(f32(R.nx), f32(R.ny)) * R.h;
@@ -85,6 +87,66 @@ fn sample_wet(world_x: f32, nx: i32, h: f32) -> f32 {
   return mix(wet[i0], wet[i1], fx);
 }
 
+fn sample_q_dep(world_x: f32, nx: i32, h: f32) -> f32 {
+  let gx = clamp(world_x / h - 0.5, 0.0, f32(nx - 1) - 1.0e-4);
+  let i0 = i32(floor(gx));
+  let i1 = min(i0 + 1, nx - 1);
+  let fx = gx - f32(i0);
+  return mix(q_dep[i0], q_dep[i1], fx);
+}
+
+fn ambient_rh_frac() -> f32 {
+  return clamp(R.q_amb / max(q_sat(R.t_amb), 1.0e-6), 0.0, 1.0);
+}
+
+fn sample_surface_rh(world_x: f32, nx: i32, h: f32) -> f32 {
+  let gx = clamp(world_x / h - 0.5, 0.0, f32(nx - 1) - 1.0e-4);
+  let i0 = i32(floor(gx));
+  let i1 = min(i0 + 1, nx - 1);
+  let fx = gx - f32(i0);
+  let k00 = cell_index(i0, 0, nx);
+  let k10 = cell_index(i1, 0, nx);
+  let k01 = cell_index(i0, 1, nx);
+  let k11 = cell_index(i1, 1, nx);
+  let t = mix(mix(tf[k00], tf[k10], fx), mix(tf[k01], tf[k11], fx), 0.55);
+  let q = mix(mix(qf[k00], qf[k10], fx), mix(qf[k01], qf[k11], fx), 0.55);
+  return clamp(q / max(q_sat(t), 1.0e-6), 0.0, 1.0);
+}
+
+fn ground_moisture_index(world_x: f32, nx: i32, h: f32) -> f32 {
+  let wv = sample_wet(world_x, nx, h);
+  let qd = sample_q_dep(world_x, nx, h);
+  let rh_s = sample_surface_rh(world_x, nx, h);
+  let rh_a = ambient_rh_frac();
+  let vapor = clamp((rh_s - rh_a) / max(1.0 - rh_a, 0.06), 0.0, 1.0);
+  return clamp(max(wv, max(qd * 0.95, vapor * 0.68)), 0.0, 1.0);
+}
+
+fn apply_ground_moisture_band(col: vec3f, world: vec2f, nx: i32, ny: i32) -> vec3f {
+  let band_h = R.h * 3.2;
+  if (world.y > band_h) { return col; }
+  let band = smoothstep(band_h, 0.0, world.y);
+  let wv = sample_wet(world.x, nx, R.h);
+  let qd = sample_q_dep(world.x, nx, R.h);
+  let gm = ground_moisture_index(world.x, nx, R.h);
+
+  let dry_ground = vec3f(0.10, 0.14, 0.09);
+  let stain_col = vec3f(0.05, 0.30, 0.40);
+  let puddle_col = vec3f(0.012, 0.07, 0.14);
+  var ground_tint = mix(dry_ground, stain_col, qd);
+  ground_tint = mix(ground_tint, puddle_col, wv * 0.85);
+
+  let darken = 1.0 - gm * 0.58 - wv * 0.22;
+  var out_col = mix(col, col * darken + ground_tint * 0.78, band * (0.45 + gm * 0.55));
+
+  let stain_rim = smoothstep(0.06, 0.28, qd) * (1.0 - smoothstep(0.72, 1.0, qd));
+  out_col += vec3f(0.04, 0.20, 0.30) * stain_rim * band * 0.14;
+
+  let sparkle = sin(world.x * 52.0 + R.time * 7.0) * sin(world.x * 37.0 - R.time * 5.0);
+  out_col += vec3f(0.20, 0.48, 0.62) * max(0.0, sparkle) * wv * band * 0.20;
+  return out_col;
+}
+
 @fragment
 fn fs_overlay(in: FSOut) -> @location(0) vec4f {
   let nx = i32(R.nx);
@@ -103,14 +165,42 @@ fn fs_overlay(in: FSOut) -> @location(0) vec4f {
   } else if (R.mode == 2u) {
     let t = mix(mix(tf[k00], tf[k10], b.fx), mix(tf[k01], tf[k11], b.fx), b.fy);
     col = ramp_temp(clamp((t - R.t_amb) / 3.0, -1.0, 1.0));
+    if (R.show_ground_moisture > 0.5) {
+      col = apply_ground_moisture_band(col, world, nx, ny);
+    }
   } else if (R.mode == 3u) {
     let t = mix(mix(tf[k00], tf[k10], b.fx), mix(tf[k01], tf[k11], b.fx), b.fy);
     let q = mix(mix(qf[k00], qf[k10], b.fx), mix(qf[k01], qf[k11], b.fx), b.fy);
     let rh = clamp(q / max(q_sat(t), 1.0e-6), 0.0, 1.0);
     col = ramp_rh(rh);
+    if (R.show_ground_moisture > 0.5) {
+      col = apply_ground_moisture_band(col, world, nx, ny);
+    }
+  } else if (R.mode == 4u) {
+    let wv = sample_wet(world.x, nx, R.h);
+    let qd = sample_q_dep(world.x, nx, R.h);
+    let gm = ground_moisture_index(world.x, nx, R.h);
+    let band_h = R.h * 3.6;
+    let band = smoothstep(band_h, 0.0, world.y);
+    let t = mix(mix(tf[k00], tf[k10], b.fx), mix(tf[k01], tf[k11], b.fx), b.fy);
+    let q = mix(mix(qf[k00], qf[k10], b.fx), mix(qf[k01], qf[k11], b.fx), b.fy);
+    let rh = clamp(q / max(q_sat(t), 1.0e-6), 0.0, 1.0);
+    let aloft = ramp_rh(rh) * 0.18 + vec3f(0.028, 0.038, 0.062);
+    let dry_soil = vec3f(0.12, 0.16, 0.10);
+    let stain = vec3f(0.04, 0.34, 0.44);
+    let puddle = vec3f(0.015, 0.08, 0.16);
+    var ground = mix(dry_soil, stain, qd);
+    ground = mix(ground, puddle, wv * 0.9);
+    ground = mix(ground, ramp_rh(gm), 0.35);
+    ground *= 1.0 - gm * 0.42;
+    col = mix(aloft, ground, band);
+    let stain_rim = smoothstep(0.05, 0.25, qd) * (1.0 - smoothstep(0.7, 1.0, qd));
+    col += vec3f(0.06, 0.24, 0.34) * stain_rim * band * 0.16;
+    let sparkle = sin(world.x * 48.0 + R.time * 8.0) * sin(world.x * 29.0 - R.time * 5.5);
+    col += vec3f(0.18, 0.42, 0.55) * max(0.0, sparkle) * wv * band * 0.22;
   }
 
-  if (R.show_wet > 0.5) {
+  if (R.show_wet > 0.5 && R.show_ground_moisture < 0.5 && R.mode != 3u && R.mode != 4u) {
     let world_y = in.uv.y * f32(ny) * R.h;
     if (world_y < R.h * 2.2) {
       let wv = sample_wet(world.x, nx, R.h);

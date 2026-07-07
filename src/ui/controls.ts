@@ -1,126 +1,123 @@
 import type { Params } from '../sim/params';
 import { syncAdvancedUI } from './advanced';
+import { $, $button, $input } from './dom';
+
+type SliderParamKey =
+  | 'tracerDensity'
+  | 'tracerLifetime'
+  | 'tAmb'
+  | 'rhAmb'
+  | 'grassDensity'
+  | 'grassStiffness';
+
+function bindCheckbox(
+  id: string,
+  get: () => boolean,
+  set: (checked: boolean) => void,
+): HTMLInputElement {
+  const el = $input(id);
+  el.checked = get();
+  el.addEventListener('change', () => set(el.checked));
+  return el;
+}
+
+function bindSlider(
+  params: Params,
+  id: string,
+  key: SliderParamKey,
+  fmt: (v: number) => string,
+  onInput?: () => void,
+): void {
+  const el = $input(id);
+  const label = $<HTMLElement>(`${id}-val`);
+  el.value = String(params[key]);
+  label.textContent = fmt(params[key]);
+  el.addEventListener('input', () => {
+    params[key] = parseFloat(el.value);
+    label.textContent = fmt(params[key]);
+    onInput?.();
+  });
+}
+
+function syncSlider(params: Params, id: string, key: SliderParamKey, fmt: (v: number) => string): void {
+  const el = $input(id);
+  const label = $<HTMLElement>(`${id}-val`);
+  el.value = String(params[key]);
+  label.textContent = fmt(params[key]);
+}
 
 export function setupControls(
   params: Params,
   { onReset, onGrassDensity }: { onReset: () => void; onGrassDensity?: () => void },
 ) {
-  const $ = (id: string): any => document.getElementById(id);
-
-  const latent = $('latent-toggle');
-  latent.checked = params.latentOn;
-  latent.addEventListener('change', () => {
-    params.latentOn = latent.checked;
-    $('latent-state').textContent = params.latentOn
-      ? 'ON — evaporative cooling → downdraft'
-      : 'OFF — momentum only → updraft';
-  });
+  bindCheckbox(
+    'latent-toggle',
+    () => params.latentOn,
+    (checked) => {
+      params.latentOn = checked;
+      $<HTMLElement>('latent-state').textContent = params.latentOn
+        ? 'ON — evaporative cooling → downdraft'
+        : 'OFF — momentum only → updraft';
+    },
+  );
 
   const modes: [string, number][] = [
     ['ov-none', 0],
     ['ov-vel', 1],
     ['ov-temp', 2],
     ['ov-hum', 3],
+    ['ov-moisture', 4],
   ];
   function setOverlay(mode: number) {
     params.overlay = mode;
     for (const [id, m] of modes) {
-      $(id as string).classList.toggle('active', m === mode);
+      $button(id).classList.toggle('active', m === mode);
     }
   }
   for (const [id, m] of modes) {
-    $(id).addEventListener('click', () => setOverlay(m));
+    $button(id).addEventListener('click', () => setOverlay(m));
   }
   setOverlay(params.overlay);
 
-  const arrows = $('show-arrows');
-  arrows.checked = params.showArrows;
-  arrows.addEventListener('change', () => (params.showArrows = arrows.checked));
+  bindCheckbox('show-arrows', () => params.showArrows, (v) => (params.showArrows = v));
+  bindCheckbox('show-droplets', () => params.showDroplets, (v) => (params.showDroplets = v));
+  bindCheckbox('show-tracers', () => params.showTracers, (v) => (params.showTracers = v));
+  bindCheckbox('show-tracer-streaks', () => params.showTracerStreaks, (v) => (params.showTracerStreaks = v));
 
-  const dropsChk = $('show-droplets');
-  dropsChk.checked = params.showDroplets;
-  dropsChk.addEventListener('change', () => (params.showDroplets = dropsChk.checked));
+  bindSlider(params, 'tracer-density', 'tracerDensity', (v) => `${Math.round(v).toLocaleString()}/s`);
+  bindSlider(params, 'tracer-lifetime', 'tracerLifetime', (v) => `${v.toFixed(1)} s`);
 
-  const tracersChk = $('show-tracers');
-  tracersChk.checked = params.showTracers;
-  tracersChk.addEventListener('change', () => (params.showTracers = tracersChk.checked));
+  bindCheckbox('show-grass', () => params.showGrass, (v) => (params.showGrass = v));
+  bindCheckbox('stylized-view', () => params.stylizedView, (v) => (params.stylizedView = v));
+  bindCheckbox('show-trees', () => params.showTrees, (v) => (params.showTrees = v));
+  bindCheckbox('show-houses', () => params.showHouses, (v) => (params.showHouses = v));
+  bindCheckbox('show-clouds', () => params.showClouds, (v) => (params.showClouds = v));
+  bindCheckbox('show-ground-mist', () => params.showGroundMist, (v) => (params.showGroundMist = v));
+  bindCheckbox('show-wet-ground', () => params.showWetGround, (v) => (params.showWetGround = v));
+  bindCheckbox(
+    'show-ground-moisture',
+    () => params.showGroundMoisture,
+    (v) => (params.showGroundMoisture = v),
+  );
 
-  const streaksChk = $('show-tracer-streaks');
-  streaksChk.checked = params.showTracerStreaks;
-  streaksChk.addEventListener('change', () => (params.showTracerStreaks = streaksChk.checked));
+  bindSlider(params, 't-amb', 'tAmb', (v) => `${v.toFixed(0)} °C`);
+  bindSlider(params, 'rh-amb', 'rhAmb', (v) => `${v.toFixed(0)} %`);
+  bindSlider(params, 'grass-density', 'grassDensity', (v) => `${Math.round(v)} blades`, onGrassDensity);
+  bindSlider(params, 'grass-stiffness', 'grassStiffness', (v) => `${(v * 100).toFixed(0)}%`);
 
-  const tracerSliders: [string, keyof Params, (v: number) => string][] = [
-    ['tracer-density', 'tracerDensity', (v) => `${Math.round(v).toLocaleString()}/s`],
-    ['tracer-lifetime', 'tracerLifetime', (v) => `${v.toFixed(1)} s`],
-  ];
-  for (const [id, key, fmt] of tracerSliders) {
-    const el = $(id) as HTMLInputElement;
-    const label = $(id + '-val') as HTMLElement;
-    el.value = String(params[key]);
-    label.textContent = fmt(params[key] as number);
-    el.addEventListener('input', () => {
-      (params as any)[key] = parseFloat(el.value);
-      label.textContent = fmt(params[key] as number);
-    });
-  }
-
-  const grassChk = $('show-grass');
-  grassChk.checked = params.showGrass;
-  grassChk.addEventListener('change', () => (params.showGrass = grassChk.checked));
-
-  const treesChk = $('show-trees');
-  treesChk.checked = params.showTrees;
-  treesChk.addEventListener('change', () => (params.showTrees = treesChk.checked));
-
-  const housesChk = $('show-houses');
-  housesChk.checked = params.showHouses;
-  housesChk.addEventListener('change', () => (params.showHouses = housesChk.checked));
-
-  const cloudsChk = $('show-clouds');
-  cloudsChk.checked = params.showClouds;
-  cloudsChk.addEventListener('change', () => (params.showClouds = cloudsChk.checked));
-
-  const mistChk = $('show-ground-mist');
-  mistChk.checked = params.showGroundMist;
-  mistChk.addEventListener('change', () => (params.showGroundMist = mistChk.checked));
-
-  const wetChk = $('show-wet-ground');
-  wetChk.checked = params.showWetGround;
-  wetChk.addEventListener('change', () => (params.showWetGround = wetChk.checked));
-
-  const sliders: [string, keyof Params, (v: number) => string][] = [
-    ['t-amb', 'tAmb', (v) => `${v.toFixed(0)} °C`],
-    ['rh-amb', 'rhAmb', (v) => `${v.toFixed(0)} %`],
-    ['grass-density', 'grassDensity', (v) => `${Math.round(v)} blades`],
-    ['grass-stiffness', 'grassStiffness', (v) => `${(v * 100).toFixed(0)}%`],
-  ];
-  for (const [id, key, fmt] of sliders) {
-    const el = $(id) as HTMLInputElement;
-    const label = $(id + '-val') as HTMLElement;
-    el.value = String(params[key]);
-    label.textContent = fmt(params[key] as number);
-    el.addEventListener('input', () => {
-      (params as any)[key] = parseFloat(el.value);
-      label.textContent = fmt(params[key] as number);
-      if (key === 'grassDensity') onGrassDensity?.();
-    });
-  }
-
-  const pauseBtn = $('pause');
+  const pauseBtn = $button('pause');
   pauseBtn.addEventListener('click', () => {
     params.paused = !params.paused;
     pauseBtn.textContent = params.paused ? 'Resume' : 'Pause';
   });
 
-  $('reset').addEventListener('click', onReset);
+  $button('reset').addEventListener('click', onReset);
 }
 
 export function syncControlsUI(params: Params): void {
-  const $ = (id: string): any => document.getElementById(id);
-
-  const latent = $('latent-toggle') as HTMLInputElement;
+  const latent = $input('latent-toggle');
   latent.checked = params.latentOn;
-  $('latent-state').textContent = params.latentOn
+  $<HTMLElement>('latent-state').textContent = params.latentOn
     ? 'ON — evaporative cooling → downdraft'
     : 'OFF — momentum only → updraft';
 
@@ -129,49 +126,35 @@ export function syncControlsUI(params: Params): void {
     ['ov-vel', 1],
     ['ov-temp', 2],
     ['ov-hum', 3],
+    ['ov-moisture', 4],
   ];
   for (const [id, m] of modes) {
-    $(id).classList.toggle('active', m === params.overlay);
+    $button(id).classList.toggle('active', m === params.overlay);
   }
 
-  ($('show-arrows') as HTMLInputElement).checked = params.showArrows;
-  ($('show-droplets') as HTMLInputElement).checked = params.showDroplets;
-  ($('show-tracers') as HTMLInputElement).checked = params.showTracers;
-  ($('show-tracer-streaks') as HTMLInputElement).checked = params.showTracerStreaks;
+  $input('show-arrows').checked = params.showArrows;
+  $input('show-droplets').checked = params.showDroplets;
+  $input('show-tracers').checked = params.showTracers;
+  $input('show-tracer-streaks').checked = params.showTracerStreaks;
 
-  const tracerSliders: [string, keyof Params, (v: number) => string][] = [
-    ['tracer-density', 'tracerDensity', (v) => `${Math.round(v).toLocaleString()}/s`],
-    ['tracer-lifetime', 'tracerLifetime', (v) => `${v.toFixed(1)} s`],
-  ];
-  for (const [id, key, fmt] of tracerSliders) {
-    const el = $(id) as HTMLInputElement;
-    const label = $(id + '-val') as HTMLElement;
-    el.value = String(params[key]);
-    label.textContent = fmt(params[key] as number);
-  }
+  syncSlider(params, 'tracer-density', 'tracerDensity', (v) => `${Math.round(v).toLocaleString()}/s`);
+  syncSlider(params, 'tracer-lifetime', 'tracerLifetime', (v) => `${v.toFixed(1)} s`);
 
-  ($('show-grass') as HTMLInputElement).checked = params.showGrass;
-  ($('show-trees') as HTMLInputElement).checked = params.showTrees;
-  ($('show-houses') as HTMLInputElement).checked = params.showHouses;
-  ($('show-clouds') as HTMLInputElement).checked = params.showClouds;
-  ($('show-ground-mist') as HTMLInputElement).checked = params.showGroundMist;
-  ($('show-wet-ground') as HTMLInputElement).checked = params.showWetGround;
+  $input('show-grass').checked = params.showGrass;
+  $input('stylized-view').checked = params.stylizedView;
+  $input('show-trees').checked = params.showTrees;
+  $input('show-houses').checked = params.showHouses;
+  $input('show-clouds').checked = params.showClouds;
+  $input('show-ground-mist').checked = params.showGroundMist;
+  $input('show-wet-ground').checked = params.showWetGround;
+  $input('show-ground-moisture').checked = params.showGroundMoisture;
 
-  const sliders: [string, keyof Params, (v: number) => string][] = [
-    ['t-amb', 'tAmb', (v) => `${v.toFixed(0)} °C`],
-    ['rh-amb', 'rhAmb', (v) => `${v.toFixed(0)} %`],
-    ['grass-density', 'grassDensity', (v) => `${Math.round(v)} blades`],
-    ['grass-stiffness', 'grassStiffness', (v) => `${(v * 100).toFixed(0)}%`],
-  ];
-  for (const [id, key, fmt] of sliders) {
-    const el = $(id) as HTMLInputElement;
-    const label = $(id + '-val') as HTMLElement;
-    el.value = String(params[key]);
-    label.textContent = fmt(params[key] as number);
-  }
+  syncSlider(params, 't-amb', 'tAmb', (v) => `${v.toFixed(0)} °C`);
+  syncSlider(params, 'rh-amb', 'rhAmb', (v) => `${v.toFixed(0)} %`);
+  syncSlider(params, 'grass-density', 'grassDensity', (v) => `${Math.round(v)} blades`);
+  syncSlider(params, 'grass-stiffness', 'grassStiffness', (v) => `${(v * 100).toFixed(0)}%`);
 
-  const pauseBtn = $('pause') as HTMLButtonElement;
-  pauseBtn.textContent = params.paused ? 'Resume' : 'Pause';
+  $button('pause').textContent = params.paused ? 'Resume' : 'Pause';
 
   syncAdvancedUI(params);
 }

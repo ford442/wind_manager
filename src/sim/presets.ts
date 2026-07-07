@@ -255,13 +255,22 @@ export const SIM_PRESETS: SimPreset[] = [
   },
 ];
 
+type ScalarParamKey = {
+  [K in keyof Params]: K extends 'emitters' | 'selectedEmitterId' ? never : K;
+}[keyof Params];
+
+function assignScalar<K extends ScalarParamKey>(
+  target: Params,
+  key: K,
+  value: Params[K],
+): void {
+  target[key] = value;
+}
+
 export function applyPreset(target: Params, preset: SimPreset): void {
   const defaults = defaultParams();
-  const scalarKeys = Object.keys(defaults) as (keyof Params)[];
-  for (const key of scalarKeys) {
-    if (key === 'emitters' || key === 'selectedEmitterId') continue;
-    const val = preset.patch[key] ?? defaults[key];
-    (target as Record<string, unknown>)[key] = val;
+  for (const key of Object.keys(defaults) as ScalarParamKey[]) {
+    assignScalar(target, key, preset.patch[key] ?? defaults[key]);
   }
 
   target.emitters = preset.emitters.map((def) => {

@@ -21,8 +21,11 @@ const SCALE_WET : f32 = 1.0e8;
 const GROUND_SPLASH : f32 = 0.22;
 const GROUND_TEMP   : f32 = 0.12;
 const WET_DECAY     : f32 = 0.85;
+const QDEP_DECAY    : f32 = 0.06;
+const QDEP_INTEG    : f32 = 3.2;
 
 struct Params {
+  // Layout documented in src/sim/simParamsUniform.ts (84 bytes).
   nx          : u32,
   ny          : u32,
   h           : f32,

@@ -3,13 +3,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite build --config vite.scene.config.js && vite",
+    "build": "vite build --config vite.scene.config.js && vite build",
     "preview": "vite preview",
-    "start": "vite"
+    "start": "npm run dev",
+    "lint": "eslint src",
+    "verify": "npm run lint && npx tsc --noEmit && npm run build"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@typescript-eslint/eslint-plugin": "^8.63.0",
+    "@typescript-eslint/parser": "^8.63.0",
     "@webgpu/types": "^0.1.71",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.3"
   }

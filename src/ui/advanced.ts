@@ -1,5 +1,4 @@
 import {
-  ADVANCED_DEFAULTS,
   previewAdvancedWarnings,
   resetAdvancedToDefaults,
   sanitizeAdvancedParams,
@@ -91,6 +90,10 @@ const SLIDERS: SliderSpec[] = [
   },
 ];
 
+function setAdvancedParam(params: Params, key: AdvancedKey, value: number): void {
+  params[key] = value;
+}
+
 function cellLabel(p: Params): string {
   const h = (p.domainW / p.nx) * 1000;
   return `cell ≈ ${h.toFixed(1)} mm · ${p.nx}×${p.ny}`;
@@ -110,7 +113,7 @@ export function syncAdvancedUI(params: Params): void {
   for (const spec of SLIDERS) {
     const el = document.getElementById(spec.id) as HTMLInputElement;
     const label = document.getElementById(spec.id + '-val')!;
-    const val = params[spec.key] as number;
+    const val = params[spec.key];
     el.value = String(val);
     label.textContent = spec.fmt(val, params);
   }
@@ -133,11 +136,13 @@ export function setupAdvanced(
     const el = document.getElementById(spec.id) as HTMLInputElement;
     const label = document.getElementById(spec.id + '-val')!;
     el.addEventListener('input', () => {
-      (params as Record<string, number>)[spec.key] =
+      const raw = parseFloat(el.value);
+      const value =
         spec.key === 'substeps' || spec.key === 'jacobiIters' || spec.key === 'nx' || spec.key === 'ny'
-          ? Math.round(parseFloat(el.value))
-          : parseFloat(el.value);
-      label.textContent = spec.fmt(params[spec.key] as number, params);
+          ? Math.round(raw)
+          : raw;
+      setAdvancedParam(params, spec.key, value);
+      label.textContent = spec.fmt(params[spec.key], params);
       const cellEl = document.getElementById('adv-cell-val');
       if (cellEl) cellEl.textContent = cellLabel(params);
       showMessages(previewAdvancedWarnings(params), []);

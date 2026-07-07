@@ -7,6 +7,7 @@
 @group(0) @binding(6) var<storage, read_write> acc_m : array<atomic<i32>>;
 @group(0) @binding(7) var<storage, read_write> wet : array<f32>;
 @group(0) @binding(8) var<storage, read_write> acc_wet : array<atomic<i32>>;
+@group(0) @binding(9) var<storage, read_write> q_dep : array<f32>;
 
 @compute @workgroup_size(64)
 fn apply(@builtin(global_invocation_id) gid: vec3u) {
@@ -29,7 +30,17 @@ fn apply_wet(@builtin(global_invocation_id) gid: vec3u) {
   let i = i32(gid.x);
   if (gid.x >= P.nx) { return; }
 
+  let nx = i32(P.nx);
   let dw = f32(atomicExchange(&acc_wet[i], 0)) / SCALE_WET;
   var w = wet[i] * (1.0 - WET_DECAY * P.dt) + clamp(dw, 0.0, 0.65);
   wet[i] = clamp(w, 0.0, 1.0);
+
+  let k0 = cell_index(i, 0, nx);
+  let k1 = cell_index(i, 1, nx);
+  let q_surf = mix(qf[k0], qf[k1], 0.55);
+  let q_ex = max(0.0, q_surf - P.q_amb);
+  let splash = clamp(dw * 2.2, 0.0, 0.4);
+  var dep = q_dep[i] * (1.0 - QDEP_DECAY * P.dt);
+  dep += (q_ex * QDEP_INTEG + splash) * P.dt;
+  q_dep[i] = clamp(dep, 0.0, 1.0);
 }

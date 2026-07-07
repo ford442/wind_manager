@@ -1,25 +1,36 @@
 import { cellSize, qAmb, type Params } from '../sim/params';
+import type { Droplets } from '../sim/droplets';
+import type { Fields } from '../sim/fields';
 import { MAX_EMITTERS } from '../sim/emitters';
 import { tracerPoolSize, type TracerSystem } from '../sim/tracers';
+import { blendedColorTarget, opaqueColorTarget, renderPipeline } from './webgpu';
 
 import commonSrc from '../shaders/common.wgsl?raw';
 import renderSrc from '../shaders/render.wgsl?raw';
 
-const RPARAM_BYTES = 56;
+const RPARAM_BYTES = 64;
 const EMITTER_VIS_BYTES = 32;
 const ARROW_STRIDE = 8;
 const EMITTER_VERTS = 93;
 
 export interface Renderer {
-  rebuildBindGroups: (f: any) => void;
-  draw: (view: GPUTextureView, p: Params, f: any, canvasW: number, canvasH: number) => void;
+  rebuildBindGroups: (f: Fields) => void;
+  draw: (view: GPUTextureView, p: Params, f: Fields, canvasW: number, canvasH: number) => void;
 }
 
+/**
+ * Field overlay renderer: temperature / humidity / velocity false-color, droplets,
+ * arrows, tracers, and emitter gizmos. Composites into the WebGPU canvas each frame.
+ *
+ * `rebuildBindGroups` is called every draw because `fields.vel0` / `T0` / `q0`
+ * may change after the sim ping-pong swap. Render uniforms (64-byte `RParams`)
+ * are still packed manually in `draw` — see follow-up to mirror `simParamsUniform.ts`.
+ */
 export async function createRenderer(
   device: GPUDevice,
   format: GPUTextureFormat,
-  fields: any,
-  drops: any,
+  fields: Fields,
+  drops: Droplets,
   tracers: TracerSystem,
   _params: Params,
 ): Promise<Renderer> {
@@ -28,51 +39,46 @@ export async function createRenderer(
     code: commonSrc + '\n' + renderSrc,
   });
 
-  const blend: GPUBlendState = {
-    color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
-    alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-  };
-
-  const overlayPipe = device.createRenderPipeline({
+  const overlayPipe = renderPipeline(device, {
     label: 'overlay',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_fullscreen' },
-    fragment: { module, entryPoint: 'fs_overlay', targets: [{ format }] },
+    fragment: { module, entryPoint: 'fs_overlay', targets: [opaqueColorTarget(format)] },
     primitive: { topology: 'triangle-list' },
   });
-  const arrowPipe = device.createRenderPipeline({
+  const arrowPipe = renderPipeline(device, {
     label: 'arrows',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_arrows' },
-    fragment: { module, entryPoint: 'fs_arrows', targets: [{ format, blend: blend as any }] },
+    fragment: { module, entryPoint: 'fs_arrows', targets: [blendedColorTarget(format)] },
     primitive: { topology: 'line-list' },
   });
-  const dropPipe = device.createRenderPipeline({
+  const dropPipe = renderPipeline(device, {
     label: 'droplets',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_drops' },
-    fragment: { module, entryPoint: 'fs_drops', targets: [{ format, blend: blend as any }] },
+    fragment: { module, entryPoint: 'fs_drops', targets: [blendedColorTarget(format)] },
     primitive: { topology: 'triangle-list' },
   });
-  const emitterPipe = device.createRenderPipeline({
+  const emitterPipe = renderPipeline(device, {
     label: 'emitter',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_emitter' },
-    fragment: { module, entryPoint: 'fs_emitter', targets: [{ format, blend: blend as any }] },
+    fragment: { module, entryPoint: 'fs_emitter', targets: [blendedColorTarget(format)] },
     primitive: { topology: 'triangle-list' },
   });
-  const streakPipe = device.createRenderPipeline({
+  const streakPipe = renderPipeline(device, {
     label: 'tracer_streaks',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_tracer_streaks' },
-    fragment: { module, entryPoint: 'fs_tracers', targets: [{ format, blend: blend as any }] },
+    fragment: { module, entryPoint: 'fs_tracers', targets: [blendedColorTarget(format)] },
     primitive: { topology: 'line-list' },
   });
-  const tracerDotPipe = device.createRenderPipeline({
+  const tracerDotPipe = renderPipeline(device, {
     label: 'tracer_dots',
     layout: 'auto',
     vertex: { module, entryPoint: 'vs_tracer_dots' },
-    fragment: { module, entryPoint: 'fs_tracers', targets: [{ format, blend: blend as any }] },
+    fragment: { module, entryPoint: 'fs_tracers', targets: [blendedColorTarget(format)] },
     primitive: { topology: 'triangle-list' },
   });
 
@@ -85,15 +91,15 @@ export async function createRenderer(
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
 
-  let overlayBG;
-  let arrowBG;
-  let dropBG;
-  let emitterBG;
-  let streakBG;
-  let tracerDotBG;
+  let overlayBG: GPUBindGroup;
+  let arrowBG: GPUBindGroup;
+  let dropBG: GPUBindGroup;
+  let emitterBG: GPUBindGroup;
+  let streakBG: GPUBindGroup;
+  let tracerDotBG: GPUBindGroup;
 
-  function rebuildBindGroups(f) {
-    const tracerEntries = [
+  function rebuildBindGroups(f: Fields): void {
+    const tracerEntries: GPUBindGroupEntry[] = [
       { binding: 0, resource: { buffer: uniform } },
       { binding: 1, resource: { buffer: f.vel0 } },
       { binding: 7, resource: { buffer: tracers.pool } },
@@ -106,6 +112,7 @@ export async function createRenderer(
         { binding: 2, resource: { buffer: f.T0 } },
         { binding: 3, resource: { buffer: f.q0 } },
         { binding: 6, resource: { buffer: f.wet } },
+        { binding: 8, resource: { buffer: f.qDep } },
       ],
     });
     arrowBG = device.createBindGroup({
@@ -168,6 +175,7 @@ export async function createRenderer(
       dv.setFloat32(o, p.tracerLifetime, true); o += 4;
       dv.setFloat32(o, p.showTracers ? 1 : 0, true); o += 4;
       dv.setFloat32(o, p.showTracerStreaks ? 1 : 0, true); o += 4;
+      dv.setFloat32(o, p.showGroundMoisture ? 1 : 0, true);
       device.queue.writeBuffer(uniform, 0, data);
 
       for (let i = 0; i < MAX_EMITTERS; i++) {

@@ -16,6 +16,8 @@ export interface Fields {
   accM: GPUBuffer;
   wet: GPUBuffer;
   accWet: GPUBuffer;
+  /** Slow-decay integral of surface humidity + splash deposition per ground column. */
+  qDep: GPUBuffer;
   h: number;
   reset: (queue: GPUQueue, params: Params) => void;
 }
@@ -24,47 +26,65 @@ export function createFields(device: GPUDevice, p: Params): Fields {
   const n = p.nx * p.ny;
   const usage =
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const mk = (size) => device.createBuffer({ size, usage });
+  const mk = (size: number) => device.createBuffer({ size, usage });
 
-  const f: any = {
-    n,
-    vel0: mk(n * 8),
-    vel1: mk(n * 8),
-    T0: mk(n * 4),
-    T1: mk(n * 4),
-    q0: mk(n * 4),
-    q1: mk(n * 4),
-    p0: mk(n * 4),
-    p1: mk(n * 4),
-    div: mk(n * 4),
-    accQ: mk(n * 4),
-    accT: mk(n * 4),
-    accM: mk(n * 8),
-    wet: mk(p.nx * 4),
-    accWet: mk(p.nx * 4),
-  };
+  const vel0 = mk(n * 8);
+  const vel1 = mk(n * 8);
+  const T0 = mk(n * 4);
+  const T1 = mk(n * 4);
+  const q0 = mk(n * 4);
+  const q1 = mk(n * 4);
+  const p0 = mk(n * 4);
+  const p1 = mk(n * 4);
+  const div = mk(n * 4);
+  const accQ = mk(n * 4);
+  const accT = mk(n * 4);
+  const accM = mk(n * 8);
+  const wet = mk(p.nx * 4);
+  const accWet = mk(p.nx * 4);
+  const qDep = mk(p.nx * 4);
+  const h = cellSize(p);
 
-  f.reset = (queue: GPUQueue, params: Params) => {
+  const reset = (queue: GPUQueue, params: Params): void => {
     const zeros2 = new Float32Array(n * 2);
     const tInit = new Float32Array(n).fill(params.tAmb);
     const qInit = new Float32Array(n).fill(qAmb(params));
     const zeros = new Float32Array(n);
-    queue.writeBuffer(f.vel0, 0, zeros2);
-    queue.writeBuffer(f.vel1, 0, zeros2);
-    queue.writeBuffer(f.T0, 0, tInit);
-    queue.writeBuffer(f.T1, 0, tInit);
-    queue.writeBuffer(f.q0, 0, qInit);
-    queue.writeBuffer(f.q1, 0, qInit);
-    queue.writeBuffer(f.p0, 0, zeros);
-    queue.writeBuffer(f.p1, 0, zeros);
-    queue.writeBuffer(f.div, 0, zeros);
-    queue.writeBuffer(f.accQ, 0, new Int32Array(n));
-    queue.writeBuffer(f.accT, 0, new Int32Array(n));
-    queue.writeBuffer(f.accM, 0, new Int32Array(n * 2));
-    queue.writeBuffer(f.wet, 0, new Float32Array(p.nx));
-    queue.writeBuffer(f.accWet, 0, new Int32Array(p.nx));
+    queue.writeBuffer(vel0, 0, zeros2);
+    queue.writeBuffer(vel1, 0, zeros2);
+    queue.writeBuffer(T0, 0, tInit);
+    queue.writeBuffer(T1, 0, tInit);
+    queue.writeBuffer(q0, 0, qInit);
+    queue.writeBuffer(q1, 0, qInit);
+    queue.writeBuffer(p0, 0, zeros);
+    queue.writeBuffer(p1, 0, zeros);
+    queue.writeBuffer(div, 0, zeros);
+    queue.writeBuffer(accQ, 0, new Int32Array(n));
+    queue.writeBuffer(accT, 0, new Int32Array(n));
+    queue.writeBuffer(accM, 0, new Int32Array(n * 2));
+    queue.writeBuffer(wet, 0, new Float32Array(p.nx));
+    queue.writeBuffer(accWet, 0, new Int32Array(p.nx));
+    queue.writeBuffer(qDep, 0, new Float32Array(p.nx));
   };
 
-  f.h = cellSize(p);
-  return f as Fields;
+  return {
+    n,
+    vel0,
+    vel1,
+    T0,
+    T1,
+    q0,
+    q1,
+    p0,
+    p1,
+    div,
+    accQ,
+    accT,
+    accM,
+    wet,
+    accWet,
+    qDep,
+    h,
+    reset,
+  };
 }

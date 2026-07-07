@@ -18,6 +18,13 @@ export interface Params {
   emitters: Emitter[];
   selectedEmitterId: string | null;
 
+  /** Wall-clock burst length when triggered (space / button). */
+  burstDuration: number;
+  /** Emission-rate multiplier during an active burst. */
+  burstMultiplier: number;
+  /** Seconds remaining in the current burst (runtime only). */
+  burstRemaining: number;
+
   maxDroplets: number;
 
   relax: number;
@@ -43,6 +50,10 @@ export interface Params {
   showClouds: boolean;
   showGroundMist: boolean;
   showWetGround: boolean;
+  showGroundMoisture: boolean;
+
+  /** Composite painterly backyard scene on the physics canvas. */
+  stylizedView: boolean;
 }
 
 export function qSat(tC: number): number {
@@ -71,6 +82,10 @@ export function defaultParams(): Params {
     emitters,
     selectedEmitterId: emitters[0]?.id ?? null,
 
+    burstDuration: 0.5,
+    burstMultiplier: 8,
+    burstRemaining: 0,
+
     maxDroplets: 200000,
 
     relax: 1 / 120,
@@ -96,6 +111,8 @@ export function defaultParams(): Params {
     showClouds: true,
     showGroundMist: true,
     showWetGround: true,
+    showGroundMoisture: true,
+    stylizedView: true,
   };
 }
 

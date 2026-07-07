@@ -10,24 +10,46 @@ import type { Sim } from './sim/step';
 import { createSim } from './sim/step';
 import type { Renderer } from './render/overlays';
 import { createRenderer } from './render/overlays';
+import {
+  createFieldDiagnosticsBuffers,
+  sampleFieldDiagnostics,
+  type FieldDiagnosticsBuffers,
+} from './render/fieldDiagnostics';
+import { configureWebGPUCanvas, getWebGPUContext } from './render/webgpu';
+import type { VelSampler } from './render/velSampler';
+import { createVelSampler } from './render/velSampler';
 import { setupControls } from './ui/controls';
 import { setupPresets } from './ui/presets';
-import { setupAdvanced } from './ui/advanced';
+import { setupAdvanced, type AdvancedControls } from './ui/advanced';
 import { setupEmitterInteraction } from './ui/emitter';
 import { setupEmitterPanel, syncEmitterPanelUI } from './ui/emitterPanel';
+import { setupBurst, syncBurstUI } from './ui/burst';
+import { setupShare } from './ui/share';
+import { setupHelp } from './ui/help';
+import { applySavedState, loadStateFromHash, type ApplyStateResult } from './sim/state';
+import { tickBurst } from './sim/burst';
 import { createGrassLayer } from './render/grass';
 import { createTreesLayer } from './render/trees';
 import { createBackyardLayer } from './render/backyard';
-import { createVelSampler } from './render/velSampler';
-import { drawEnvironmentOverlay, envOverlayActive } from './render/environment';
+import { drawEnvironmentOverlay, needsVelSampler } from './render/environment';
+import { setupCanvasResize } from './render/canvasSize';
+import { $, $button, setText, setTextClass } from './ui/dom';
 
 const DIAG_INTERVAL = 30;
 
-function fail(msg) {
+function fail(msg: string): void {
   const el = document.getElementById('gpu-error');
-  el.style.display = 'block';
-  el.querySelector('.msg').textContent = msg;
-  document.getElementById('status').textContent = 'unavailable';
+  if (el) {
+    el.style.display = 'block';
+    const msgEl = el.querySelector('.msg');
+    if (msgEl) msgEl.textContent = msg;
+  }
+  setText('status', 'unavailable');
+}
+
+function formatInitError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 async function init(): Promise<void> {
@@ -36,62 +58,58 @@ async function init(): Promise<void> {
          'Use a recent Chrome/Edge, or enable WebGPU in your browser.');
     return;
   }
-  const adapter = await navigator.gpu.requestAdapter();
+  const adapter: GPUAdapter | null = await navigator.gpu.requestAdapter();
   if (!adapter) {
     fail('No WebGPU adapter available on this machine.');
     return;
   }
-  const device = await adapter.requestDevice();
-  device.addEventListener('uncapturederror', (e) => {
-    console.error('[wind_manager] WebGPU error:', e.error.message);
-    document.getElementById('nan-status').textContent = 'GPU error (see console)';
-    document.getElementById('nan-status').classList.add('bad');
+  const device: GPUDevice = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (event: GPUUncapturedErrorEvent) => {
+    console.error('[wind_manager] WebGPU error:', event.error.message);
+    setText('nan-status', 'GPU error (see console)');
+    setTextClass('nan-status', 'bad', true);
   });
 
-  const canvas = document.getElementById('c') as HTMLCanvasElement;
-  const grassCanvas = document.getElementById('grass-overlay') as HTMLCanvasElement;
-  const ctx = canvas.getContext('webgpu')!;
-  const format = navigator.gpu.getPreferredCanvasFormat();
-  ctx.configure({ device, format, alphaMode: 'opaque' });
+  const canvas = $<HTMLCanvasElement>('c');
+  const grassCanvas = $<HTMLCanvasElement>('grass-overlay');
+  const canvasWrap = document.querySelector('.canvas-wrap') as HTMLElement;
+  const gpuContext: GPUCanvasContext = getWebGPUContext(canvas);
+  const format: GPUTextureFormat = navigator.gpu.getPreferredCanvasFormat();
+  configureWebGPUCanvas(gpuContext, device, format);
 
   const params: Params = defaultParams();
+  const hashState = loadStateFromHash();
+  let loadedFromHash = false;
+  let hashError: string | null = null;
+  if (hashState && 'state' in hashState) {
+    applySavedState(params, hashState.state);
+    loadedFromHash = true;
+  } else if (hashState && 'error' in hashState) {
+    hashError = hashState.error;
+  }
+
   let fields: Fields = createFields(device, params);
   const drops: Droplets = createDroplets(device, params);
   const tracers: TracerSystem = createTracerSystem(device);
   const sim: Sim = await createSim(device, fields, drops, tracers, params);
   const renderer: Renderer = await createRenderer(device, format, fields, drops, tracers, params);
-  let velSampler = createVelSampler(device, params);
+  let velSampler: VelSampler = createVelSampler(device, params);
   const grass = createGrassLayer(grassCanvas, params);
   const trees = createTreesLayer(grassCanvas);
   const backyard = createBackyardLayer(grassCanvas);
 
-  let diagN = params.nx * params.ny;
-  let stagT = device.createBuffer({
-    size: diagN * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  });
-  let stagV = device.createBuffer({
-    size: diagN * 8, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  });
-  const stagC = device.createBuffer({
-    size: 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  });
+  const diagnostics: FieldDiagnosticsBuffers = createFieldDiagnosticsBuffers(
+    device,
+    params.nx * params.ny,
+  );
 
   function resizeDiagnostics(): void {
-    diagN = params.nx * params.ny;
-    stagT.destroy();
-    stagV.destroy();
-    stagT = device.createBuffer({
-      size: diagN * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-    stagV = device.createBuffer({
-      size: diagN * 8, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
+    diagnostics.resize(device, params.nx * params.ny);
   }
 
   function pauseSim(): void {
     params.paused = true;
-    const pauseBtn = document.getElementById('pause') as HTMLButtonElement;
-    pauseBtn.textContent = 'Resume';
+    $button('pause').textContent = 'Resume';
   }
 
   function rebuildGridIfNeeded(): void {
@@ -104,87 +122,85 @@ async function init(): Promise<void> {
     resizeDiagnostics();
   }
 
+  function applySimulationChanges(result?: ApplyStateResult): void {
+    if (result?.needsGridRebuild) {
+      fields = createFields(device, params);
+      sim.setFields(fields);
+      velSampler.resize(device, params);
+      renderer.rebuildBindGroups(fields);
+      resizeDiagnostics();
+    } else {
+      rebuildGridIfNeeded();
+    }
+    grass.rebuild(params);
+    sim.reset(params);
+    syncEmitterPanelUI(params);
+    syncBurstUI(params);
+  }
+
   sim.reset(params);
   setupControls(params, {
     onReset: () => sim.reset(params),
     onGrassDensity: () => grass.rebuild(params),
   });
+  const share = setupShare(params, {
+    onApply: (result: ApplyStateResult) => applySimulationChanges(result),
+    loadedFromHash,
+    hashError,
+  });
   setupPresets(params, {
     onApply: () => {
-      rebuildGridIfNeeded();
-      grass.rebuild(params);
-      sim.reset(params);
+      applySimulationChanges();
+      share.notifyChange();
     },
   });
-  const advanced = setupAdvanced(params, {
+  const advanced: AdvancedControls = setupAdvanced(params, {
     onPause: pauseSim,
-    onApply: (result) => {
-      if (result.needsGridRebuild) {
-        fields = createFields(device, params);
-        sim.setFields(fields);
-        velSampler.resize(device, params);
-        renderer.rebuildBindGroups(fields);
-        resizeDiagnostics();
-      }
-      grass.rebuild(params);
-      sim.reset(params);
+    onApply: (result: ApplyStateResult) => {
+      applySimulationChanges(result);
+      share.notifyChange();
     },
   });
   setupEmitterPanel(params);
-  setupEmitterInteraction(canvas, params, () => syncEmitterPanelUI(params));
+  setupBurst(params);
+  setupEmitterInteraction(canvas, params, () => {
+    syncEmitterPanelUI(params);
+    syncBurstUI(params);
+    share.notifyChange();
+  });
+  setupHelp();
+
+  setupCanvasResize({
+    container: canvasWrap,
+    canvases: [canvas, grassCanvas],
+    onResize: () => {
+      configureWebGPUCanvas(gpuContext, device, format);
+      grass.resize(grassCanvas.width, grassCanvas.height);
+    },
+  });
 
   let diagBusy = false;
 
-  async function runDiagnostics() {
+  async function runDiagnostics(): Promise<void> {
     diagBusy = true;
     try {
-      const f = sim.getFields();
-      const enc = device.createCommandEncoder();
-      enc.copyBufferToBuffer(f.T0, 0, stagT, 0, diagN * 4);
-      enc.copyBufferToBuffer(f.vel0, 0, stagV, 0, diagN * 8);
-      enc.copyBufferToBuffer(drops.counter, 0, stagC, 0, 4);
-      device.queue.submit([enc.finish()]);
-
-      await Promise.all([
-        stagT.mapAsync(GPUMapMode.READ),
-        stagV.mapAsync(GPUMapMode.READ),
-        stagC.mapAsync(GPUMapMode.READ),
-      ]);
-      const t = new Float32Array(stagT.getMappedRange());
-      const v = new Float32Array(stagV.getMappedRange());
-      const emitted = new Uint32Array(stagC.getMappedRange())[0];
-
-      let minT = Infinity, maxT = -Infinity, maxSp2 = 0, nan = false;
-      for (let i = 0; i < diagN; i++) {
-        const ti = t[i];
-        if (Number.isNaN(ti)) { nan = true; break; }
-        if (ti < minT) minT = ti;
-        if (ti > maxT) maxT = ti;
-        const vx = v[2 * i], vy = v[2 * i + 1];
-        if (Number.isNaN(vx) || Number.isNaN(vy)) { nan = true; break; }
-        const s2 = vx * vx + vy * vy;
-        if (s2 > maxSp2) maxSp2 = s2;
-      }
-      stagT.unmap(); stagV.unmap(); stagC.unmap();
-
-      const $ = (id) => document.getElementById(id);
+      const sample = await sampleFieldDiagnostics(device, diagnostics, sim.getFields(), drops);
       const nanEl = $('nan-status');
-      if (nan) {
+      if (sample.hasNaN) {
         nanEl.textContent = 'NaN DETECTED';
         nanEl.classList.add('bad');
         advanced.notifyInstability('Non-finite field values detected.');
       } else {
         nanEl.textContent = 'fields finite';
         nanEl.classList.remove('bad');
-        $('t-range').textContent = `${minT.toFixed(2)} … ${maxT.toFixed(2)} °C`;
-        $('max-speed').textContent = `${Math.sqrt(maxSp2).toFixed(2)} m/s`;
-        if (maxSp2 > 3600) {
-          $('max-speed').classList.add('bad');
-        } else {
-          $('max-speed').classList.remove('bad');
-        }
+        setText(
+          't-range',
+          `${sample.minTemperature.toFixed(2)} … ${sample.maxTemperature.toFixed(2)} °C`,
+        );
+        setText('max-speed', `${Math.sqrt(sample.maxSpeedSquared).toFixed(2)} m/s`);
+        setTextClass('max-speed', 'bad', sample.maxSpeedSquared > 3600);
       }
-      $('emitted').textContent = emitted.toLocaleString();
+      setText('emitted', sample.emitted.toLocaleString());
     } finally {
       diagBusy = false;
     }
@@ -193,20 +209,27 @@ async function init(): Promise<void> {
   let lastFps = performance.now();
   let framesSinceFps = 0;
   let lastFrame = performance.now();
+  let wasBursting = false;
 
-  function frame() {
+  function frame(): void {
     const now = performance.now();
     const dt = Math.min(0.05, (now - lastFrame) / 1000);
     lastFrame = now;
 
     if (!params.paused) {
+      tickBurst(params, dt);
       sim.step(params);
     }
-    velSampler.scheduleRead(device, sim.getFields(), params, envOverlayActive(params));
+    const bursting = params.burstRemaining > 0;
+    if (bursting || wasBursting) syncBurstUI(params);
+    wasBursting = bursting;
+
+    const currentFields = sim.getFields();
+    velSampler.scheduleRead(device, currentFields, params, needsVelSampler(params));
     renderer.draw(
-      ctx.getCurrentTexture().createView(),
+      gpuContext.getCurrentTexture().createView(),
       params,
-      sim.getFields(),
+      currentFields,
       canvas.width,
       canvas.height,
     );
@@ -223,24 +246,25 @@ async function init(): Promise<void> {
 
     framesSinceFps++;
     if (now - lastFps > 500) {
-      document.getElementById('fps').textContent =
-        ((framesSinceFps * 1000) / (now - lastFps)).toFixed(0);
+      setText('fps', ((framesSinceFps * 1000) / (now - lastFps)).toFixed(0));
       framesSinceFps = 0;
       lastFps = now;
     }
-    document.getElementById('sim-time').textContent = `${sim.time.toFixed(1)} s`;
+    setText('sim-time', `${sim.time.toFixed(1)} s`);
 
     if (sim.frame % DIAG_INTERVAL === 0 && !diagBusy && !params.paused) {
-      runDiagnostics().catch((e) => console.error('diagnostics failed', e));
+      runDiagnostics().catch((error: unknown) => {
+        console.error('diagnostics failed', error);
+      });
     }
     requestAnimationFrame(frame);
   }
 
-  document.getElementById('status').textContent = 'running';
+  setText('status', 'running');
   requestAnimationFrame(frame);
 }
 
-init().catch((e) => {
-  console.error(e);
-  fail(String(e && e.message ? e.message : e));
+init().catch((error: unknown) => {
+  console.error(error);
+  fail(formatInitError(error));
 });

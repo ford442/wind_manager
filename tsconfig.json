@@ -3,17 +3,17 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "strict": false,
+    // Full strict mode: catches null/undefined, implicit any, unsafe casts, and
+    // loose function types across the WebGPU sim + UI. Prefer typed helpers over
+    // @ts-expect-error; use the latter only when @webgpu/types lags the runtime API.
+    "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["@webgpu/types"],
-    // "baseUrl" and paths are optional; removed deprecation warning for now
-    // "baseUrl": ".",
-    // "paths": { "@/*": ["src/*"] }
+    "types": ["@webgpu/types"]
   },
   "include": ["src/**/*.ts", "vite.config.js"],
   "exclude": ["node_modules", "dist"]

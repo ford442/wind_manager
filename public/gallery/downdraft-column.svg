@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" role="img" aria-label="Strong vertical hose: spray rises, cold air sinks, floor outflow">
+  <rect width="320" height="120" fill="#060a0f"/>
+  <rect x="0" y="100" width="320" height="20" fill="#1a2e1a"/>
+  <rect x="28" y="72" width="8" height="28" fill="#38bdf8" opacity="0.35"/>
+  <path d="M32 72 Q32 40 32 18" stroke="#7dd3fc" stroke-width="3" fill="none" stroke-dasharray="4 3"/>
+  <path d="M32 55 C20 70 8 95 40 108 M32 55 C44 70 56 95 24 108" stroke="#34d399" stroke-width="2" fill="none" opacity="0.85"/>
+  <circle cx="32" cy="108" r="3" fill="#38bdf8"/>
+  <text x="48" y="24" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">cold column sinks</text>
+  <text x="48" y="108" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">floor outflow gust</text>
+  <text x="8" y="14" fill="#dbe4ee" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="600">Vertical hose (left)</text>
+</svg>

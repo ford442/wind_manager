@@ -1,6 +1,7 @@
 import type { Params } from '../sim/params';
 import type { VelSampler } from './velSampler';
 import { LAYOUT, sceneX, sceneY } from './sceneLayout';
+import { lowPassRate, SCENE_COLORS, worldToPx } from './sceneCanvas';
 
 interface House {
   xFrac: number;
@@ -42,15 +43,8 @@ export function createBackyardLayer(overlay: HTMLCanvasElement): BackyardLayer {
     phase: c.phase,
   }));
 
-  function worldToPx(x: number, y: number, p: Params): [number, number] {
-    const px = (x / p.domainW) * overlay.width;
-    const py = (1 - y / p.domainH) * overlay.height;
-    return [px, py];
-  }
-
-  function lowPass(state: number, target: number, rate: number, dt: number): number {
-    const a = 1 - Math.exp(-rate * dt);
-    return state + (target - state) * a;
+  function worldToPxLocal(x: number, y: number, p: Params): [number, number] {
+    return worldToPx(x, y, p, overlay.width, overlay.height);
   }
 
   function drawCloud(c: Cloud, p: Params, simTime: number, sampler: VelSampler, dt: number): void {
@@ -63,11 +57,11 @@ export function createBackyardLayer(overlay: HTMLCanvasElement): BackyardLayer {
     if (c.drift < -span) c.drift = span;
 
     const wx = baseX + c.drift;
-    const [cx, cyp] = worldToPx(wx, cy, p);
+    const [cx, cyp] = worldToPxLocal(wx, cy, p);
     const bob = Math.sin(simTime * 0.45 + c.phase) * 2 + vy * 1.5;
     const s = c.s * (overlay.width / p.domainW) * 0.028;
 
-    ctx.fillStyle = 'rgba(226, 232, 240, 0.72)';
+    ctx.fillStyle = SCENE_COLORS.cloud;
     ctx.beginPath();
     ctx.ellipse(cx, cyp + bob, 26 * s, 11 * s, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -88,16 +82,16 @@ export function createBackyardLayer(overlay: HTMLCanvasElement): BackyardLayer {
     const hh = h.hFrac * p.domainH;
     const { vx } = sampler.sampleWind(wx, hh * 0.35, p);
     const swayPx = overlay.width / p.domainW;
-    h.flagSway = lowPass(h.flagSway, vx * swayPx * 0.55, 5.5, dt);
+    h.flagSway = lowPassRate(h.flagSway, vx * swayPx * 0.55, 5.5, dt);
 
-    const [hx, groundY] = worldToPx(wx, 0, p);
+    const [hx, groundY] = worldToPxLocal(wx, 0, p);
     const wPx = (hw / p.domainW) * overlay.width;
     const hPx = (hh / p.domainH) * overlay.height;
 
-    ctx.fillStyle = '#334155';
+    ctx.fillStyle = SCENE_COLORS.houseBody;
     ctx.fillRect(hx - wPx / 2, groundY - hPx, wPx, hPx);
 
-    ctx.fillStyle = '#1e2937';
+    ctx.fillStyle = SCENE_COLORS.houseRoof;
     ctx.beginPath();
     ctx.moveTo(hx - wPx / 2 - 5, groundY - hPx);
     ctx.lineTo(hx, groundY - hPx - hPx * 0.55);
@@ -179,7 +173,7 @@ export function createBackyardLayer(overlay: HTMLCanvasElement): BackyardLayer {
         const alpha = Math.min(0.42, sprayShadow + gust * 0.28);
         if (alpha < 0.06) continue;
 
-        const [px] = worldToPx(wx, 0, p);
+        const [px] = worldToPxLocal(wx, 0, p);
         const wobble = Math.sin(simTime * 1.6 + i * 0.9) * stripH * 0.08;
         const drift = vx * (overlay.width / p.domainW) * 8;
         const r = stripH * (0.22 + (i % 3) * 0.04);

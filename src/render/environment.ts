@@ -3,9 +3,16 @@ import type { VelSampler } from './velSampler';
 import type { GrassLayer } from './grass';
 import type { TreesLayer } from './trees';
 import type { BackyardLayer } from './backyard';
+import { drawStylizedGroundBase, drawStylizedSky } from './sceneCanvas';
 
 export function envOverlayActive(p: Params): boolean {
-  return p.showGrass || p.showTrees || p.showHouses || p.showClouds || p.showGroundMist || p.showWetGround;
+  if (!p.stylizedView) return false;
+  return p.showGrass || p.showTrees || p.showHouses || p.showClouds || p.showGroundMist
+    || p.showWetGround || p.showGroundMoisture;
+}
+
+export function needsVelSampler(p: Params): boolean {
+  return envOverlayActive(p) || p.overlay >= 3;
 }
 
 export function drawEnvironmentOverlay(
@@ -20,6 +27,12 @@ export function drawEnvironmentOverlay(
 ): void {
   const ctx = overlay.getContext('2d')!;
   ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!p.stylizedView) return;
+
+  const skyAlpha = p.overlay === 0 ? 0.72 : 0.38;
+  drawStylizedSky(ctx, overlay.width, overlay.height, skyAlpha);
+  drawStylizedGroundBase(ctx, overlay.width, overlay.height, 0.9);
+
   if (!envOverlayActive(p)) return;
 
   backyard.drawClouds(p, simTime, dt, sampler);

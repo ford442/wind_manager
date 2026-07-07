@@ -22,10 +22,24 @@
 <body class="min-h-screen p-4 md:p-8">
   <div class="max-w-[1100px] mx-auto">
     <!-- Header -->
-    <div class="flex items-end justify-between mb-4">
+    <div class="flex items-end justify-between mb-4 flex-wrap gap-3">
       <div>
+        <nav class="flex gap-1 mb-2 p-1 bg-slate-950 border border-slate-800 rounded-lg w-fit" aria-label="App mode">
+          <span class="px-3 py-1.5 text-xs rounded-md bg-emerald-600 text-emerald-950 font-medium" aria-current="page">
+            Art playground
+            <span class="block text-[10px] font-normal opacity-90">instant canvas · no GPU</span>
+          </span>
+          <a href="/" class="px-3 py-1.5 text-xs rounded-md text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-transparent hover:border-slate-700">
+            Physics sim
+            <span class="block text-[10px] font-normal opacity-80">WebGPU · latent heat</span>
+          </a>
+        </nav>
         <h1 class="text-3xl font-semibold tracking-tight">wind_manager</h1>
         <p class="text-slate-400 text-sm mt-0.5">Water + wind interacting with grass, trees, houses &amp; clouds</p>
+        <div class="mt-2 p-2.5 bg-emerald-950/40 border border-emerald-900/60 rounded-lg max-w-xl text-xs text-slate-400 leading-relaxed">
+          <strong class="text-emerald-400">Quick artistic experiments</strong> — analytic wind blobs, draggable emitters, same backyard layout as the
+          <a href="/" class="text-sky-400 underline">physics sim</a>. Sketch here first; toggle <strong class="text-slate-300">Stylized view</strong> there to see this scene driven by real fields.
+        </div>
       </div>
       <div class="text-right text-xs text-slate-500">
         Click canvas to add emitter<br>
@@ -123,11 +137,8 @@
     </div>
   </div>
 
-  <script>
-    // Tailwind script
-    function initTailwind() {
-      document.documentElement.style.setProperty('--accent', '#10b981');
-    }
+  <script type="module">
+    import * as scene from '/scene-shared.js';
 
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d', { alpha: true });
@@ -135,7 +146,8 @@
     // Scene dimensions (logical)
     const W = canvas.width;
     const H = canvas.height;
-    const GROUND_Y = H - 70;
+    const GROUND_Y = scene.groundLineY(H);
+    const C = scene.SCENE_COLORS;
 
     // State
     let time = 0;
@@ -222,37 +234,22 @@
       grass.sort((a, b) => a.x - b.x);
     }
 
-    // Trees
+    // Trees — positions from shared layout (sceneData.ts)
     let trees = [];
     function initTrees() {
-      trees = [
-        { x: 180, h: 135, type: 'tall', sway: 0, phase: 1.2 },
-        { x: 310, h: 92, type: 'medium', sway: 0, phase: 0.4 },
-        { x: 560, h: 118, type: 'tall', sway: 0, phase: 2.9 },
-        { x: 720, h: 67, type: 'medium', sway: 0, phase: 1.8 },
-        { x: 830, h: 48, type: 'small', sway: 0, phase: 0.1 }
-      ];
+      trees = scene.layoutTreesForCanvas(W, H);
     }
 
-    // Houses
+    // Houses — shared layout
     let houses = [];
     function initHouses() {
-      houses = [
-        { x: 420, w: 78, h: 52, flagSway: 0 },
-        { x: 660, w: 62, h: 44, flagSway: 0 }
-      ];
+      houses = scene.layoutHousesForCanvas(W, H);
     }
 
-    // Clouds
+    // Clouds — shared layout
     let clouds = [];
     function initClouds() {
-      clouds = [
-        { x: 80, y: 72, s: 1.0, phase: 0 },
-        { x: 240, y: 48, s: 0.75, phase: 1.6 },
-        { x: 470, y: 91, s: 1.3, phase: 3.2 },
-        { x: 690, y: 55, s: 0.9, phase: 4.1 },
-        { x: 850, y: 80, s: 1.1, phase: 5.9 }
-      ];
+      clouds = scene.layoutCloudsForCanvas(W, H);
     }
 
     function resetScene() {
@@ -268,33 +265,31 @@
     }
 
     function addExampleSetup() {
-      // A strong upward water jet on the left that should affect the distant tall tree
+      const left = scene.defaultPlaygroundEmitter(W, H);
       emitters.push({
         id: Date.now(),
         type: 'water',
-        x: 95,
-        y: GROUND_Y - 28,
-        angle: -4,           // almost straight up
+        x: left.x,
+        y: left.y,
+        angle: left.angle,
         power: 4.6,
         spread: 14,
         radius: 310
       });
-      // A secondary wind gust a bit to the right
       emitters.push({
         id: Date.now() + 1,
         type: 'wind',
-        x: 210,
+        x: scene.LAYOUT.emitterLeft * W + 115,
         y: GROUND_Y - 55,
         angle: 18,
         power: 3.2,
         spread: 27,
         radius: 240
       });
-      // One more far water to see interactions
       emitters.push({
         id: Date.now() + 2,
         type: 'water',
-        x: 380,
+        x: scene.LAYOUT.emitterCenter * W - 70,
         y: GROUND_Y - 12,
         angle: -32,
         power: 2.1,
@@ -389,37 +384,17 @@
       syncUIFromEmitter();
     }
 
-    // Drawing helpers
+    // Drawing helpers (sky/ground from shared sceneCanvas)
     function drawSky() {
-      const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y + 30);
-      g.addColorStop(0, '#0f172a');
-      g.addColorStop(0.45, '#1e3a5f');
-      g.addColorStop(0.78, '#334155');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, GROUND_Y + 40);
+      scene.drawStylizedSky(ctx, W, H, 1);
     }
 
     function drawGround() {
-      ctx.fillStyle = '#166534';
-      ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-      
-      // Subtle ground texture / slope
-      ctx.fillStyle = '#14532d';
-      for (let i = 0; i < 7; i++) {
-        ctx.fillRect(0, GROUND_Y + 6 + i * 8, W, 4);
-      }
-      // Horizon line
-      ctx.strokeStyle = '#4ade80';
-      ctx.globalAlpha = 0.15;
-      ctx.beginPath();
-      ctx.moveTo(0, GROUND_Y);
-      ctx.lineTo(W, GROUND_Y);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      scene.drawStylizedGroundBase(ctx, W, H, 1);
     }
 
     function drawGrass() {
-      ctx.strokeStyle = '#4ade80';
+      ctx.strokeStyle = C.grassStroke;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
 
@@ -471,7 +446,7 @@
       const midSway = sway * 0.75;
 
       // Trunk
-      ctx.strokeStyle = '#3f2a1f';
+      ctx.strokeStyle = C.trunk;
       ctx.lineWidth = tree.type === 'tall' ? 6.5 : tree.type === 'medium' ? 4.5 : 3.5;
       ctx.beginPath();
       ctx.moveTo(tree.x, GROUND_Y);
@@ -482,7 +457,7 @@
       ctx.stroke();
 
       // Foliage layers
-      const foliageColor = tree.type === 'tall' ? '#166534' : '#15803d';
+      const foliageColor = tree.type === 'tall' ? C.foliage : C.foliageMid;
       ctx.fillStyle = foliageColor;
 
       const layers = tree.type === 'tall' ? 5 : tree.type === 'medium' ? 4 : 3;
@@ -520,11 +495,11 @@
       h.flagSway = h.flagSway * 0.8 + wind.vx * 0.55;
 
       // Body
-      ctx.fillStyle = '#334155';
+      ctx.fillStyle = C.houseBody;
       ctx.fillRect(h.x - h.w / 2, GROUND_Y - h.h, h.w, h.h);
 
       // Roof
-      ctx.fillStyle = '#1e2937';
+      ctx.fillStyle = C.houseRoof;
       ctx.beginPath();
       ctx.moveTo(h.x - h.w / 2 - 6, GROUND_Y - h.h);
       ctx.lineTo(h.x, GROUND_Y - h.h - h.h * 0.55);
@@ -1081,18 +1056,18 @@
     }
 
     function init() {
-      initTailwind();
       initGrass();
       initTrees();
       initHouses();
       initClouds();
 
-      // Start with one water emitter to demonstrate immediately
+      // Start with one water emitter at the shared left-fence layout position
+      const start = scene.defaultPlaygroundEmitter(W, H);
       emitters.push({
         id: 1,
         type: 'water',
-        x: 120,
-        y: GROUND_Y - 35,
+        x: start.x,
+        y: start.y,
         angle: -18,
         power: 3.3,
         spread: 15,

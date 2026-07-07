@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" role="img" aria-label="Tree shake: downdraft travels across yard to distant tree">
+  <rect width="320" height="120" fill="#060a0f"/>
+  <rect x="0" y="100" width="320" height="20" fill="#1a2e1a"/>
+  <circle cx="28" cy="100" r="3" fill="#38bdf8"/>
+  <rect x="26" y="70" width="6" height="30" fill="#38bdf8" opacity="0.3"/>
+  <path d="M28 95 C80 98 140 96 200 92 C240 88 270 85 290 82" stroke="#34d399" stroke-width="2.5" fill="none"/>
+  <path d="M290 70 L298 82 L290 94" stroke="#34d399" stroke-width="1.5" fill="none"/>
+  <ellipse cx="292" cy="62" rx="14" ry="22" fill="#166534" opacity="0.85"/>
+  <rect x="289" y="82" width="6" height="18" fill="#422006"/>
+  <text x="8" y="14" fill="#dbe4ee" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="600">100 ft tree shake</text>
+  <text x="120" y="108" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">floor gust reaches distant canopy</text>
+</svg>

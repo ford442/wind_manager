@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" role="img" aria-label="Hot dry air: strong evaporative cooling and downdraft">
+  <rect width="320" height="120" fill="#060a0f"/>
+  <rect x="0" y="100" width="320" height="20" fill="#1a2e1a"/>
+  <circle cx="32" cy="100" r="3" fill="#38bdf8"/>
+  <rect x="24" y="45" width="16" height="55" fill="#1d4ed8" opacity="0.45" rx="2"/>
+  <path d="M32 95 C10 98 20 108 50 108 M32 95 C54 98 44 108 14 108" stroke="#22d3ee" stroke-width="2.5" fill="none"/>
+  <text x="8" y="14" fill="#dbe4ee" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="600">Dry hot ambient</text>
+  <text x="48" y="38" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">max evaporative cooling</text>
+  <text x="48" y="50" fill="#7c8ea3" font-family="ui-sans-serif,sans-serif" font-size="10">strongest downdraft</text>
+</svg>
