@@ -76,12 +76,14 @@ fn fs_overlay(in: FSOut) -> @location(0) vec4f {
   let k11 = cell_index(b.i1, b.j1, nx);
 
   var col = vec3f(0.045, 0.055, 0.085); // background
+  // sqrt mapping lifts the weak far-field signal without saturating the core
   if (R.mode == 1u) {
     let v = mix(mix(vel[k00], vel[k10], b.fx), mix(vel[k01], vel[k11], b.fx), b.fy);
-    col = ramp_speed(clamp(length(v) / 1.5, 0.0, 1.0));
+    col = ramp_speed(sqrt(clamp(length(v) / 1.5, 0.0, 1.0)));
   } else if (R.mode == 2u) {
     let t = mix(mix(tf[k00], tf[k10], b.fx), mix(tf[k01], tf[k11], b.fx), b.fy);
-    col = ramp_temp(clamp((t - R.t_amb) / 1.5, -1.0, 1.0));
+    let d = clamp((t - R.t_amb) / 4.0, -1.0, 1.0);
+    col = ramp_temp(sign(d) * sqrt(abs(d)));
   } else if (R.mode == 3u) {
     let t = mix(mix(tf[k00], tf[k10], b.fx), mix(tf[k01], tf[k11], b.fx), b.fy);
     let q = mix(mix(qf[k00], qf[k10], b.fx), mix(qf[k01], qf[k11], b.fx), b.fy);

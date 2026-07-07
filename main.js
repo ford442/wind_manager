@@ -33,6 +33,10 @@ async function init() {
   // instance and later mapAsync calls fail ("external Instance reference
   // no longer exists").
   window.__wgpuAdapter = adapter;
+  device.lost.then((info) => {
+    console.error('[wind_manager] GPU device lost:', info.reason, info.message);
+    fail(`GPU device lost: ${info.message}`);
+  });
   device.addEventListener('uncapturederror', (e) => {
     console.error('[wind_manager] WebGPU error:', e.error.message);
     document.getElementById('nan-status').textContent = 'GPU error (see console)';
@@ -143,13 +147,67 @@ async function init() {
     requestAnimationFrame(frame);
   }
 
+  // Debug/verification hook: reads back the fields and summarizes the
+  // physics — mean vertical velocity in the column above the emitter,
+  // horizontal outflow speed along the floor, and the temperature minimum.
+  window.__wm_debug = {
+    params,
+    sim,
+    probe: async () => {
+      // Dedicated staging buffers so a probe never collides with an
+      // in-flight diagnostics readback on the shared ones.
+      const pT = device.createBuffer({
+        size: n * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      const pV = device.createBuffer({
+        size: n * 8, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      const enc = device.createCommandEncoder();
+      enc.copyBufferToBuffer(fields.T0, 0, pT, 0, n * 4);
+      enc.copyBufferToBuffer(fields.vel0, 0, pV, 0, n * 8);
+      device.queue.submit([enc.finish()]);
+      await Promise.all([
+        pT.mapAsync(GPUMapMode.READ),
+        pV.mapAsync(GPUMapMode.READ),
+      ]);
+      const t = new Float32Array(pT.getMappedRange()).slice();
+      const v = new Float32Array(pV.getMappedRange()).slice();
+      pT.destroy(); pV.destroy();
+
+      const h = params.domainW / params.nx;
+      const ci = Math.round(params.emitX / h);
+      // column: x within ±0.25 m of emitter, y in [1.0, 3.0] m
+      let vySum = 0, vyN = 0, minT = Infinity, colT = Infinity;
+      const di = Math.round(0.25 / h);
+      for (let j = Math.round(1.0 / h); j < Math.round(3.0 / h); j++) {
+        for (let i = ci - di; i <= ci + di; i++) {
+          const k = j * params.nx + i;
+          vySum += v[2 * k + 1];
+          vyN++;
+          if (t[k] < colT) colT = t[k];
+        }
+      }
+      for (let k = 0; k < n; k++) if (t[k] < minT) minT = t[k];
+      // floor outflow: max |u.x| in the lowest 0.3 m, at least 1 m from emitter
+      let floorOut = 0;
+      for (let j = 0; j < Math.round(0.3 / h); j++) {
+        for (let i = 0; i < params.nx; i++) {
+          if (Math.abs(i - ci) * h < 1.0) continue;
+          const ux = Math.abs(v[2 * (j * params.nx + i)]);
+          if (ux > floorOut) floorOut = ux;
+        }
+      }
+      return {
+        vyColumn: vySum / vyN,
+        floorOut,
+        minT,
+        colMinT: colT,
+        time: sim.time,
+      };
+    },
+  };
+
   document.getElementById('status').textContent = 'running';
-  // Debug handle for console poking and automated tests.
-  window.__wind = { device, adapter, params, fields, drops, sim };
-  device.lost.then((info) => {
-    console.error('[wind_manager] device lost:', info.reason, info.message);
-    fail(`GPU device lost: ${info.message}`);
-  });
   requestAnimationFrame(frame);
 }
 

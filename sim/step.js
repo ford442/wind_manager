@@ -8,7 +8,8 @@ import { cellSize, qAmb } from './params.js';
 const PARAM_BYTES = 80; // must match struct Params in common.wgsl
 
 async function loadShader(name) {
-  const res = await fetch(`shaders/${name}`);
+  const url = new URL(`../shaders/${name}`, import.meta.url);
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`failed to load shaders/${name}`);
   return res.text();
 }

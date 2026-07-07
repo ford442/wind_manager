@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>wind_manager test harness</title></head>
+<body>
+<pre id="log">harness…</pre>
+<script type="module">
+// Headless-friendly test harness: runs the full sim loop and renders into an
+// offscreen texture (canvas presentation crashes SwiftShader in headless
+// Chromium, so the visual pipelines are exercised off-screen instead).
+// Drive it via window.harness from Playwright — see test/run_headless.mjs.
+import { defaultParams } from '../sim/params.js';
+import { createFields } from '../sim/fields.js';
+import { createDroplets } from '../sim/droplets.js';
+import { createSim } from '../sim/step.js';
+import { createRenderer } from '../render/overlays.js';
+
+const log = (m) => {
+  document.getElementById('log').textContent += '\n' + m;
+  console.log('[harness]', m);
+};
+
+const W = 1024, H = 768;
+
+async function init() {
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('no WebGPU adapter');
+  const device = await adapter.requestDevice();
+  let lost = null;
+  device.lost.then((i) => { lost = i.reason + ': ' + i.message; log('DEVICE LOST ' + lost); });
+  device.addEventListener('uncapturederror', (e) => log('GPU ERROR: ' + e.error.message));
+
+  const params = defaultParams();
+  const fields = createFields(device, params);
+  const drops = createDroplets(device, params);
+  const sim = await createSim(device, fields, drops, params);
+  const renderer = await createRenderer(device, 'rgba8unorm', fields, drops, params);
+  sim.reset(params);
+
+  const target = device.createTexture({
+    size: [W, H], format: 'rgba8unorm',
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
+  const n = params.nx * params.ny;
+
+  async function readback(buffer, bytes) {
+    const stag = device.createBuffer({
+      size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const enc = device.createCommandEncoder();
+    enc.copyBufferToBuffer(buffer, 0, stag, 0, bytes);
+    device.queue.submit([enc.finish()]);
+    await stag.mapAsync(GPUMapMode.READ);
+    const out = stag.getMappedRange().slice(0);
+    stag.destroy();
+    return out;
+  }
+
+  window.harness = {
+    params,
+    sim,
+    lost: () => lost,
+
+    // Advance the sim to the given sim time (seconds).
+    run: async (toTime) => {
+      while (sim.time < toTime && !lost) {
+        sim.step(params);
+        if (sim.frame % 20 === 0) await device.queue.onSubmittedWorkDone();
+      }
+      await device.queue.onSubmittedWorkDone();
+      return sim.time;
+    },
+
+    // Field summary: mean vy in the column above the emitter, peak horizontal
+    // outflow speed near the floor, T extrema, NaN check, droplets emitted.
+    probe: async () => {
+      const t = new Float32Array(await readback(fields.T0, n * 4));
+      const v = new Float32Array(await readback(fields.vel0, n * 8));
+      const emitted = new Uint32Array(await readback(drops.counter, 4))[0];
+      const h = params.domainW / params.nx;
+      const ci = Math.round(params.emitX / h);
+      const di = Math.round(0.25 / h);
+      let vySum = 0, vyN = 0, minT = Infinity, maxT = -Infinity, nan = false;
+      for (let j = Math.round(1.0 / h); j < Math.round(3.0 / h); j++) {
+        for (let i = ci - di; i <= ci + di; i++) {
+          vySum += v[2 * (j * params.nx + i) + 1];
+          vyN++;
+        }
+      }
+      let maxSp2 = 0;
+      for (let k = 0; k < n; k++) {
+        if (Number.isNaN(t[k]) || Number.isNaN(v[2 * k]) || Number.isNaN(v[2 * k + 1])) { nan = true; break; }
+        if (t[k] < minT) minT = t[k];
+        if (t[k] > maxT) maxT = t[k];
+        const s2 = v[2 * k] ** 2 + v[2 * k + 1] ** 2;
+        if (s2 > maxSp2) maxSp2 = s2;
+      }
+      let floorOut = 0;
+      for (let j = 0; j < Math.round(0.3 / h); j++) {
+        for (let i = 0; i < params.nx; i++) {
+          if (Math.abs(i - ci) * h < 1.0) continue;
+          const ux = Math.abs(v[2 * (j * params.nx + i)]);
+          if (ux > floorOut) floorOut = ux;
+        }
+      }
+      return {
+        time: sim.time, vyColumn: vySum / vyN, floorOut,
+        minT, maxT, maxSpeed: Math.sqrt(maxSp2), nan, emitted, lost,
+      };
+    },
+
+    // Render the given overlay mode offscreen and return a PNG data URL.
+    snapshot: async (overlay) => {
+      const prev = params.overlay;
+      params.overlay = overlay;
+      renderer.draw(target.createView(), params, W, H);
+      params.overlay = prev;
+      const bytesPerRow = W * 4;
+      const stag = device.createBuffer({
+        size: bytesPerRow * H,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      const enc = device.createCommandEncoder();
+      enc.copyTextureToBuffer({ texture: target }, { buffer: stag, bytesPerRow }, [W, H]);
+      device.queue.submit([enc.finish()]);
+      await stag.mapAsync(GPUMapMode.READ);
+      const px = new Uint8ClampedArray(stag.getMappedRange().slice(0));
+      stag.destroy();
+      const c2d = document.createElement('canvas');
+      c2d.width = W; c2d.height = H;
+      c2d.getContext('2d').putImageData(new ImageData(px, W, H), 0, 0);
+      return c2d.toDataURL('image/png');
+    },
+
+    reset: () => sim.reset(params),
+  };
+  log('ready');
+}
+
+init().catch((e) => log('INIT FAILED: ' + e));
+</script>
+</body>
+</html>

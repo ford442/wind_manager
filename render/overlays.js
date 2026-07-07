@@ -7,8 +7,8 @@ const RPARAM_BYTES = 32;
 const ARROW_STRIDE = 8; // cells between arrows; must match render.wgsl
 
 export async function createRenderer(device, format, fields, drops, params) {
-  const common = await (await fetch('shaders/common.wgsl')).text();
-  const src = await (await fetch('shaders/render.wgsl')).text();
+  const common = await (await fetch(new URL('../shaders/common.wgsl', import.meta.url))).text();
+  const src = await (await fetch(new URL('../shaders/render.wgsl', import.meta.url))).text();
   const module = device.createShaderModule({
     label: 'render',
     code: common + '\n' + src,
