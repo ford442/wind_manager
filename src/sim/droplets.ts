@@ -7,6 +7,7 @@ export interface Droplets {
   pool: GPUBuffer;
   counter: GPUBuffer;
   reset: (queue: GPUQueue) => void;
+  destroy: () => void;
 }
 
 export function createDroplets(device: GPUDevice, p: Params): Droplets {
@@ -21,5 +22,14 @@ export function createDroplets(device: GPUDevice, p: Params): Droplets {
     queue.writeBuffer(counter, 0, new Uint32Array(1));
   };
 
-  return { max, pool, counter, reset };
+  return {
+    max,
+    pool,
+    counter,
+    reset,
+    destroy() {
+      pool.destroy();
+      counter.destroy();
+    },
+  };
 }

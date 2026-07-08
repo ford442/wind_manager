@@ -11,3 +11,7 @@ dist/
 # Misc
 .env
 .env.local
+deploy_old.py
+.idea/
+.vscode/
+*.swp

@@ -53,30 +53,6 @@ function formatInitError(error: unknown): string {
 }
 
 async function init(): Promise<void> {
-  if (!navigator.gpu) {
-    fail('This browser does not expose WebGPU (navigator.gpu is missing). ' +
-         'Use a recent Chrome/Edge, or enable WebGPU in your browser.');
-    return;
-  }
-  const adapter: GPUAdapter | null = await navigator.gpu.requestAdapter();
-  if (!adapter) {
-    fail('No WebGPU adapter available on this machine.');
-    return;
-  }
-  const device: GPUDevice = await adapter.requestDevice();
-  device.addEventListener('uncapturederror', (event: GPUUncapturedErrorEvent) => {
-    console.error('[wind_manager] WebGPU error:', event.error.message);
-    setText('nan-status', 'GPU error (see console)');
-    setTextClass('nan-status', 'bad', true);
-  });
-
-  const canvas = $<HTMLCanvasElement>('c');
-  const grassCanvas = $<HTMLCanvasElement>('grass-overlay');
-  const canvasWrap = document.querySelector('.canvas-wrap') as HTMLElement;
-  const gpuContext: GPUCanvasContext = getWebGPUContext(canvas);
-  const format: GPUTextureFormat = navigator.gpu.getPreferredCanvasFormat();
-  configureWebGPUCanvas(gpuContext, device, format);
-
   const params: Params = defaultParams();
   const hashState = loadStateFromHash();
   let loadedFromHash = false;
@@ -88,100 +64,160 @@ async function init(): Promise<void> {
     hashError = hashState.error;
   }
 
-  let fields: Fields = createFields(device, params);
-  const drops: Droplets = createDroplets(device, params);
-  const tracers: TracerSystem = createTracerSystem(device);
-  const sim: Sim = await createSim(device, fields, drops, tracers, params);
-  const renderer: Renderer = await createRenderer(device, format, fields, drops, tracers, params);
-  let velSampler: VelSampler = createVelSampler(device, params);
-  const grass = createGrassLayer(grassCanvas, params);
-  const trees = createTreesLayer(grassCanvas);
-  const backyard = createBackyardLayer(grassCanvas);
-
-  const diagnostics: FieldDiagnosticsBuffers = createFieldDiagnosticsBuffers(
-    device,
-    params.nx * params.ny,
-  );
-
-  function resizeDiagnostics(): void {
-    diagnostics.resize(device, params.nx * params.ny);
-  }
+  let simRunning = false;
+  let rafId = 0;
+  let gpuReady = false;
+  let device: GPUDevice | null = null;
+  let fields: Fields | null = null;
+  let drops: Droplets | null = null;
+  let sim: Sim | null = null;
+  let renderer: Renderer | null = null;
+  let velSampler: VelSampler | null = null;
+  let diagnostics: FieldDiagnosticsBuffers | null = null;
+  let advanced: AdvancedControls | null = null;
+  let cleanupCanvasResize: (() => void) | null = null;
+  let grassRebuild: (() => void) | null = null;
 
   function pauseSim(): void {
     params.paused = true;
     $button('pause').textContent = 'Resume';
   }
 
-  function rebuildGridIfNeeded(): void {
-    const need = fields.n !== params.nx * params.ny;
-    if (!need) return;
-    fields = createFields(device, params);
-    sim.setFields(fields);
-    velSampler.resize(device, params);
-    renderer.rebuildBindGroups(fields);
-    resizeDiagnostics();
+  function stopFrameLoop(): void {
+    simRunning = false;
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
   }
 
-  function applySimulationChanges(result?: ApplyStateResult): void {
+  function handleGpuFatal(msg: string): void {
+    stopFrameLoop();
+    fail(msg);
+  }
+
+  async function rebuildGridIfNeeded(): Promise<void> {
+    if (!gpuReady || !device || !fields || !sim || !velSampler || !renderer || !diagnostics) return;
+    const need = fields.n !== params.nx * params.ny;
+    if (!need) return;
+    fields.destroy();
+    fields = createFields(device, params);
+    sim.setFields(fields);
+    await velSampler.resize(device, params);
+    renderer.rebuildBindGroups(fields);
+    diagnostics.resize(device, params.nx * params.ny);
+  }
+
+  async function applySimulationChanges(result?: ApplyStateResult): Promise<void> {
+    if (!gpuReady || !device || !fields || !sim || !velSampler || !renderer || !diagnostics) return;
     if (result?.needsGridRebuild) {
+      fields.destroy();
       fields = createFields(device, params);
       sim.setFields(fields);
-      velSampler.resize(device, params);
+      await velSampler.resize(device, params);
       renderer.rebuildBindGroups(fields);
-      resizeDiagnostics();
+      diagnostics.resize(device, params.nx * params.ny);
     } else {
-      rebuildGridIfNeeded();
+      await rebuildGridIfNeeded();
     }
-    grass.rebuild(params);
     sim.reset(params);
     syncEmitterPanelUI(params);
     syncBurstUI(params);
   }
 
-  sim.reset(params);
   setupControls(params, {
-    onReset: () => sim.reset(params),
-    onGrassDensity: () => grass.rebuild(params),
+    onReset: () => sim?.reset(params),
+    onGrassDensity: () => grassRebuild?.(),
   });
   const share = setupShare(params, {
-    onApply: (result: ApplyStateResult) => applySimulationChanges(result),
+    onApply: (result: ApplyStateResult) => {
+      void applySimulationChanges(result);
+    },
     loadedFromHash,
     hashError,
   });
   setupPresets(params, {
     onApply: () => {
-      applySimulationChanges();
+      void applySimulationChanges();
       share.notifyChange();
     },
   });
-  const advanced: AdvancedControls = setupAdvanced(params, {
+  advanced = setupAdvanced(params, {
     onPause: pauseSim,
     onApply: (result: ApplyStateResult) => {
-      applySimulationChanges(result);
+      void applySimulationChanges(result);
       share.notifyChange();
     },
   });
   setupEmitterPanel(params);
   setupBurst(params);
+  setupHelp();
+
+  if (!navigator.gpu) {
+    fail(
+      'This browser does not expose WebGPU (navigator.gpu is missing). ' +
+        'Use a recent Chrome/Edge, or enable WebGPU in your browser.',
+    );
+    return;
+  }
+  const adapter: GPUAdapter | null = await navigator.gpu.requestAdapter();
+  if (!adapter) {
+    fail('No WebGPU adapter available on this machine.');
+    return;
+  }
+  device = await adapter.requestDevice();
+  device.lost.then((info) => {
+    handleGpuFatal(`GPU device lost (${info.reason}). Reload the page to restart.`);
+  });
+  device.addEventListener('uncapturederror', (event: GPUUncapturedErrorEvent) => {
+    console.error('[wind_manager] WebGPU error:', event.error.message);
+    setText('nan-status', 'GPU error (see console)');
+    setTextClass('nan-status', 'bad', true);
+    handleGpuFatal(`GPU error: ${event.error.message}. Reload the page to restart.`);
+  });
+
+  const canvas = $<HTMLCanvasElement>('c');
+  const grassCanvas = $<HTMLCanvasElement>('grass-overlay');
+  const canvasWrap = document.querySelector('.canvas-wrap') as HTMLElement;
+  const gpuContext: GPUCanvasContext = getWebGPUContext(canvas);
+  const format: GPUTextureFormat = navigator.gpu.getPreferredCanvasFormat();
+  configureWebGPUCanvas(gpuContext, device, format);
+
+  fields = createFields(device, params);
+  drops = createDroplets(device, params);
+  const tracers: TracerSystem = createTracerSystem(device);
+  sim = await createSim(device, fields, drops, tracers, params);
+  renderer = await createRenderer(device, format, fields, drops, tracers, params);
+  velSampler = createVelSampler(device, params);
+  const grass = createGrassLayer(grassCanvas, params);
+  grassRebuild = () => grass.rebuild(params);
+  const trees = createTreesLayer(grassCanvas);
+  const backyard = createBackyardLayer(grassCanvas);
+
+  diagnostics = createFieldDiagnosticsBuffers(device, params.nx * params.ny);
+
   setupEmitterInteraction(canvas, params, () => {
     syncEmitterPanelUI(params);
     syncBurstUI(params);
     share.notifyChange();
   });
-  setupHelp();
 
-  setupCanvasResize({
+  cleanupCanvasResize = setupCanvasResize({
     container: canvasWrap,
     canvases: [canvas, grassCanvas],
     onResize: () => {
-      configureWebGPUCanvas(gpuContext, device, format);
+      configureWebGPUCanvas(gpuContext, device!, format);
       grass.resize(grassCanvas.width, grassCanvas.height);
     },
   });
 
+  sim.reset(params);
+  gpuReady = true;
+
   let diagBusy = false;
 
   async function runDiagnostics(): Promise<void> {
+    if (!device || !diagnostics || !sim || !drops) return;
     diagBusy = true;
     try {
       const sample = await sampleFieldDiagnostics(device, diagnostics, sim.getFields(), drops);
@@ -189,7 +225,7 @@ async function init(): Promise<void> {
       if (sample.hasNaN) {
         nanEl.textContent = 'NaN DETECTED';
         nanEl.classList.add('bad');
-        advanced.notifyInstability('Non-finite field values detected.');
+        advanced?.notifyInstability('Non-finite field values detected.');
       } else {
         nanEl.textContent = 'fields finite';
         nanEl.classList.remove('bad');
@@ -212,6 +248,7 @@ async function init(): Promise<void> {
   let wasBursting = false;
 
   function frame(): void {
+    if (!simRunning || !sim || !renderer || !velSampler || !fields) return;
     const now = performance.now();
     const dt = Math.min(0.05, (now - lastFrame) / 1000);
     lastFrame = now;
@@ -219,13 +256,14 @@ async function init(): Promise<void> {
     if (!params.paused) {
       tickBurst(params, dt);
       sim.step(params);
+      renderer.rebuildBindGroups(sim.getFields());
     }
     const bursting = params.burstRemaining > 0;
     if (bursting || wasBursting) syncBurstUI(params);
     wasBursting = bursting;
 
     const currentFields = sim.getFields();
-    velSampler.scheduleRead(device, currentFields, params, needsVelSampler(params));
+    velSampler.scheduleRead(device!, currentFields, params, needsVelSampler(params));
     renderer.draw(
       gpuContext.getCurrentTexture().createView(),
       params,
@@ -257,11 +295,32 @@ async function init(): Promise<void> {
         console.error('diagnostics failed', error);
       });
     }
-    requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);
   }
 
+  function startFrameLoop(): void {
+    if (simRunning || document.hidden) return;
+    simRunning = true;
+    rafId = requestAnimationFrame(frame);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopFrameLoop();
+    } else {
+      startFrameLoop();
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    cleanupCanvasResize?.();
+    fields?.destroy();
+    drops?.destroy();
+    tracers.destroy();
+  });
+
   setText('status', 'running');
-  requestAnimationFrame(frame);
+  startFrameLoop();
 }
 
 init().catch((error: unknown) => {

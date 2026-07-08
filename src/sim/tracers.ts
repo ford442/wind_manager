@@ -19,6 +19,7 @@ export interface TracerSystem {
   counter: GPUBuffer;
   max: number;
   reset: (queue: GPUQueue) => void;
+  destroy: () => void;
   step: (device: GPUDevice, vel: GPUBuffer, p: Params, seed: number) => void;
   seedBurst: (device: GPUDevice, vel: GPUBuffer, p: Params, seed: number) => void;
 }
@@ -43,6 +44,10 @@ export function createTracerSystem(device: GPUDevice): TracerSystem {
     },
     step(_device, _vel, _p, _seed) {},
     seedBurst(_device, _vel, _p, _seed) {},
+    destroy() {
+      pool.destroy();
+      counter.destroy();
+    },
   };
 
   initTracerPipelines(device, sys);

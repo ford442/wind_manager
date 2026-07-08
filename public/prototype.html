@@ -29,7 +29,7 @@
             Art playground
             <span class="block text-[10px] font-normal opacity-90">instant canvas · no GPU</span>
           </span>
-          <a href="/" class="px-3 py-1.5 text-xs rounded-md text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-transparent hover:border-slate-700">
+          <a href="index.html" class="px-3 py-1.5 text-xs rounded-md text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-transparent hover:border-slate-700">
             Physics sim
             <span class="block text-[10px] font-normal opacity-80">WebGPU · latent heat</span>
           </a>
@@ -38,7 +38,7 @@
         <p class="text-slate-400 text-sm mt-0.5">Water + wind interacting with grass, trees, houses &amp; clouds</p>
         <div class="mt-2 p-2.5 bg-emerald-950/40 border border-emerald-900/60 rounded-lg max-w-xl text-xs text-slate-400 leading-relaxed">
           <strong class="text-emerald-400">Quick artistic experiments</strong> — analytic wind blobs, draggable emitters, same backyard layout as the
-          <a href="/" class="text-sky-400 underline">physics sim</a>. Sketch here first; toggle <strong class="text-slate-300">Stylized view</strong> there to see this scene driven by real fields.
+          <a href="index.html" class="text-sky-400 underline">physics sim</a>. Sketch here first; toggle <strong class="text-slate-300">Stylized view</strong> there to see this scene driven by real fields.
         </div>
       </div>
       <div class="text-right text-xs text-slate-500">
@@ -852,6 +852,7 @@
     }
 
     function handlePointerDown(e) {
+      e.preventDefault();
       const { x, y } = canvasToWorld(e);
       const hit = getEmitterAt(x, y);
 

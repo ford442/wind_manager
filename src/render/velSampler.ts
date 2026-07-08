@@ -9,7 +9,7 @@ export interface VelSampler {
   sampleSurfaceRh: (worldX: number, p: Params) => number;
   sampleQDep: (worldX: number, p: Params) => number;
   sampleGroundMoisture: (worldX: number, p: Params) => number;
-  resize: (device: GPUDevice, p: Params) => void;
+  resize: (device: GPUDevice, p: Params) => Promise<void>;
 }
 
 const SURFACE_ROWS = 2;
@@ -99,29 +99,35 @@ export function createVelSampler(device: GPUDevice, p: Params): VelSampler {
       enc.copyBufferToBuffer(f.q0, 0, qStag, 0, surfBytes);
       enc.copyBufferToBuffer(f.T0, 0, tStag, 0, surfBytes);
       gpu.queue.submit([enc.finish()]);
+      const readStag = stag;
+      const readWetStag = wetStag;
+      const readQDepStag = qDepStag;
+      const readQStag = qStag;
+      const readTStag = tStag;
       Promise.all([
-        stag.mapAsync(GPUMapMode.READ),
-        wetStag.mapAsync(GPUMapMode.READ),
-        qDepStag.mapAsync(GPUMapMode.READ),
-        qStag.mapAsync(GPUMapMode.READ),
-        tStag.mapAsync(GPUMapMode.READ),
+        readStag.mapAsync(GPUMapMode.READ),
+        readWetStag.mapAsync(GPUMapMode.READ),
+        readQDepStag.mapAsync(GPUMapMode.READ),
+        readQStag.mapAsync(GPUMapMode.READ),
+        readTStag.mapAsync(GPUMapMode.READ),
       ])
         .then(() => {
-          const mapped = new Float32Array(stag.getMappedRange());
+          if (readStag !== stag) return;
+          const mapped = new Float32Array(readStag.getMappedRange());
           velBand = new Float32Array(mapped);
-          stag.unmap();
-          const wetMapped = new Float32Array(wetStag.getMappedRange());
+          readStag.unmap();
+          const wetMapped = new Float32Array(readWetStag.getMappedRange());
           wetBand = new Float32Array(wetMapped);
-          wetStag.unmap();
-          const qDepMapped = new Float32Array(qDepStag.getMappedRange());
+          readWetStag.unmap();
+          const qDepMapped = new Float32Array(readQDepStag.getMappedRange());
           qDepBand = new Float32Array(qDepMapped);
-          qDepStag.unmap();
-          const qMapped = new Float32Array(qStag.getMappedRange());
+          readQDepStag.unmap();
+          const qMapped = new Float32Array(readQStag.getMappedRange());
           qSurfBand = new Float32Array(qMapped);
-          qStag.unmap();
-          const tMapped = new Float32Array(tStag.getMappedRange());
+          readQStag.unmap();
+          const tMapped = new Float32Array(readTStag.getMappedRange());
           tSurfBand = new Float32Array(tMapped);
-          tStag.unmap();
+          readTStag.unmap();
           readPending = false;
         })
         .catch(() => {
@@ -173,7 +179,10 @@ export function createVelSampler(device: GPUDevice, p: Params): VelSampler {
       return Math.min(1, Math.max(wv, Math.max(qd * 0.95, vapor * 0.68)));
     },
 
-    resize(gpu, params) {
+    async resize(gpu, params) {
+      while (readPending) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
       bandRows = params.ny;
       bandBytes = params.nx * bandRows * 8;
       wetBytes = params.nx * 4;

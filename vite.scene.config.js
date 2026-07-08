@@ -1,5 +1,8 @@
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { defineConfig } from 'vite';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Bundle shared scene code into public/ for the legacy playground. */
 export default defineConfig({
