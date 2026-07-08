@@ -97,8 +97,27 @@ export async function createRenderer(
   let emitterBG: GPUBindGroup;
   let streakBG: GPUBindGroup;
   let tracerDotBG: GPUBindGroup;
+  let boundVel0: GPUBuffer | null = null;
+  let boundT0: GPUBuffer | null = null;
+  let boundQ0: GPUBuffer | null = null;
+  let boundWet: GPUBuffer | null = null;
+  let boundQDep: GPUBuffer | null = null;
 
   function rebuildBindGroups(f: Fields): void {
+    if (
+      boundVel0 === f.vel0 &&
+      boundT0 === f.T0 &&
+      boundQ0 === f.q0 &&
+      boundWet === f.wet &&
+      boundQDep === f.qDep
+    ) {
+      return;
+    }
+    boundVel0 = f.vel0;
+    boundT0 = f.T0;
+    boundQ0 = f.q0;
+    boundWet = f.wet;
+    boundQDep = f.qDep;
     const tracerEntries: GPUBindGroupEntry[] = [
       { binding: 0, resource: { buffer: uniform } },
       { binding: 1, resource: { buffer: f.vel0 } },
@@ -157,8 +176,6 @@ export async function createRenderer(
     rebuildBindGroups,
 
     draw(view, p, f, canvasW, canvasH) {
-      rebuildBindGroups(f);
-
       let o = 0;
       dv.setUint32(o, p.nx, true); o += 4;
       dv.setUint32(o, p.ny, true); o += 4;
@@ -225,7 +242,8 @@ export async function createRenderer(
       }
 
       if (p.showArrows) {
-        const instances = (p.nx / ARROW_STRIDE) * (p.ny / ARROW_STRIDE);
+        const instances =
+          Math.floor(p.nx / ARROW_STRIDE) * Math.floor(p.ny / ARROW_STRIDE);
         pass.setPipeline(arrowPipe);
         pass.setBindGroup(0, arrowBG);
         pass.draw(6, instances);

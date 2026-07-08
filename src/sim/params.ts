@@ -57,6 +57,7 @@ export interface Params {
 }
 
 export function qSat(tC: number): number {
+  if (tC <= -243.0) return 0;
   const es = 610.94 * Math.exp((17.625 * tC) / (tC + 243.04));
   const p = 101325.0;
   return (0.622 * es) / (p - 0.378 * es);

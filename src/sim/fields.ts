@@ -20,6 +20,7 @@ export interface Fields {
   qDep: GPUBuffer;
   h: number;
   reset: (queue: GPUQueue, params: Params) => void;
+  destroy: () => void;
 }
 
 export function createFields(device: GPUDevice, p: Params): Fields {
@@ -67,6 +68,24 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     queue.writeBuffer(qDep, 0, new Float32Array(p.nx));
   };
 
+  const destroy = (): void => {
+    vel0.destroy();
+    vel1.destroy();
+    T0.destroy();
+    T1.destroy();
+    q0.destroy();
+    q1.destroy();
+    p0.destroy();
+    p1.destroy();
+    div.destroy();
+    accQ.destroy();
+    accT.destroy();
+    accM.destroy();
+    wet.destroy();
+    accWet.destroy();
+    qDep.destroy();
+  };
+
   return {
     n,
     vel0,
@@ -86,5 +105,6 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     qDep,
     h,
     reset,
+    destroy,
   };
 }

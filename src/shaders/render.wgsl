@@ -222,9 +222,12 @@ const ARROW_STRIDE : u32 = 8u;
 fn vs_arrows(@builtin(vertex_index) vi: u32,
              @builtin(instance_index) ii: u32) -> @builtin(position) vec4f {
   let gw = R.nx / ARROW_STRIDE;
+  let gh = R.ny / ARROW_STRIDE;
+  if (ii >= gw * gh) { return vec4f(0.0, 0.0, 2.0, 1.0); }
   let ci = (ii % gw) * ARROW_STRIDE + ARROW_STRIDE / 2u;
   let cj = (ii / gw) * ARROW_STRIDE + ARROW_STRIDE / 2u;
   let k = i32(cj * R.nx + ci);
+  if (k < 0 || k >= i32(R.nx * R.ny)) { return vec4f(0.0, 0.0, 2.0, 1.0); }
   let v = vel[k];
   let sp = length(v);
   let base = (vec2f(f32(ci), f32(cj)) + 0.5) * R.h;

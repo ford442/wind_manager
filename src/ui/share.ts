@@ -34,7 +34,26 @@ async function copyText(text: string, btn: HTMLButtonElement, okLabel: string): 
     }, 1200);
     return true;
   } catch {
-    return false;
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        const prev = btn.textContent;
+        btn.textContent = okLabel;
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      }
+      return ok;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -139,6 +158,9 @@ export function setupShare(
         return;
       }
       applyFromParsed(parsed);
+    };
+    reader.onerror = () => {
+      showStatus('Failed to read file', true);
     };
     reader.readAsText(file);
     fileInput.value = '';
