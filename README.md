@@ -38,6 +38,8 @@ npm run dev
 | `npm run preview` | Serve the production build locally |
 | `npm run lint` | ESLint on `src/**/*.ts` (TypeScript-aware rules) |
 | `npm run verify` | Lint + `tsc --noEmit` + production build (pre-push / CI) |
+| `npm run check:wgsl` | Validate every concatenated shader module with Naga (needs `naga`, see below) |
+| `npm run check:ref` | Build and run the C++ scalar reference; check it still matches the shaders (needs `cmake` + a C++17 compiler) |
 
 ### Verification
 
@@ -47,7 +49,26 @@ Before opening a PR or pushing to `main`, run:
 npm run verify
 ```
 
-This runs ESLint (`eslint.config.js`), TypeScript strict checking (`tsconfig.json` with `"strict": true`), and the Vite production build. A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the same `verify` script on push and pull requests.
+This runs ESLint (`eslint.config.js`), TypeScript strict checking (`tsconfig.json` with `"strict": true`), and the Vite production build.
+
+`verify` never executes a shader or checks a physics constant, so CI also runs two checks that need no GPU. The GitHub Actions workflow (`.github/workflows/ci.yml`) runs `verify` and `check:wgsl` in its `verify` job and `check:ref` in its `ref` job, on push and pull requests. Run all three before opening a PR that touches `src/shaders/`, `src/sim/params.ts`, or `ref/`.
+
+#### Shader validation (`npm run check:wgsl`)
+
+`createSim`, the tracer module and the renderer never compile a `.wgsl` file on its own: each one joins `[generated MAX_EMITTERS prelude] + common.wgsl + <shader>.wgsl`. `scripts/validate-wgsl.mjs` rebuilds exactly that text for all seven modules and runs [Naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) on each, mapping errors back to `file:line`. It also fails if a `.wgsl` file is missing from its module table, if the TypeScript that builds a module disagrees with the table, or if a pipeline's `entryPoint` name no longer exists in WGSL.
+
+```bash
+cargo install naga-cli --version 30.0.2 --locked   # once; or set NAGA=/path/to/naga
+npm run check:wgsl
+```
+
+Naga is not Tint (Chrome's compiler), so a pass means "Naga accepts it", which also covers Firefox's WebGPU. Runtime `getCompilationInfo()` in `compileShaderModule` remains the check for the browser you actually run. One convention follows from this: **do not pass `ptr<storage, …>` or `ptr<uniform, …>` to functions.** That needs the WGSL `unrestricted_pointer_parameters` extension, which Naga has not implemented. Read the module-scope binding directly instead (see `sample_vel` in `tracers.wgsl` and `render.wgsl`).
+
+#### C++ scalar reference (`npm run check:ref`)
+
+The solver stays in WGSL on the GPU. `ref/` is not a second simulator: it restates only the closed-form scalars documented below (`q_sat`, virtual temperature, one d² radius step and the mass it implies, and the latent `ΔT`), in one translation unit, and pins them to golden values for dry 30 °C air (20 % RH) and a 100 µm drop, with latent heat on and off. The golden values were derived independently at 50-digit precision, and the relative tolerance is `1e-9`: tight enough to catch a transposed digit in a constant, loose enough to ignore compiler differences.
+
+`scripts/check-ref-parity.mjs` stops `ref/` from drifting away from the code it mirrors: the constants in `ref/wind_ref.hpp` must equal those in `common.wgsl`, and the pinned formulas must still appear verbatim in `common.wgsl`, `droplets.wgsl`, `params.ts` and this README. If it fires after an intentional change, update `ref/`, re-derive the golden values in `ref/wind_ref_test.cpp`, then update the pin.
 
 **Lint policy:** `no-explicit-any` is an error. Prefer typed helpers in `src/ui/dom.ts` and `src/render/webgpu.ts`. If you must suppress a rule, use `// eslint-disable-next-line <rule> -- <reason>` on the next line only — not blanket file disables.
 
@@ -209,6 +230,8 @@ src/
   render/       overlays, webgpu, fieldDiagnostics, grass, trees, sceneData
   ui/           controls, dom, emitters, presets, share, help
   shaders/      WGSL (?raw imports); wgsl.ts brands sources
+scripts/       CI checks: validate-wgsl.mjs (Naga), check-ref-parity.mjs
+ref/           C++ scalar reference + golden-value test (CMake)
 index.html      app shell
 eslint.config.js  ESLint flat config (TypeScript + browser globals)
 public/         prototype.html (legacy), gallery/ (preset schematics)
