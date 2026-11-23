@@ -1,4 +1,5 @@
 import { cellSize, type Params } from './params';
+import { compileShaderModule, computePipeline, withValidationScope } from '../render/webgpu';
 
 import commonSrc from '../shaders/common.wgsl?raw';
 import tracersSrc from '../shaders/tracers.wgsl?raw';
@@ -24,7 +25,7 @@ export interface TracerSystem {
   seedBurst: (device: GPUDevice, vel: GPUBuffer, p: Params, seed: number) => void;
 }
 
-export function createTracerSystem(device: GPUDevice): TracerSystem {
+export async function createTracerSystem(device: GPUDevice): Promise<TracerSystem> {
   const usage =
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
 
@@ -50,26 +51,28 @@ export function createTracerSystem(device: GPUDevice): TracerSystem {
     },
   };
 
-  initTracerPipelines(device, sys);
+  await initTracerPipelines(device, sys);
   return sys;
 }
 
-function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): void {
-  const module = device.createShaderModule({
-    label: 'tracers',
-    code: commonSrc + '\n' + tracersSrc,
-  });
+async function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): Promise<void> {
+  const module = await compileShaderModule(device, 'tracers', [
+    { name: 'common.wgsl', code: commonSrc },
+    { name: 'tracers.wgsl', code: tracersSrc },
+  ]);
 
-  const seedPipe = device.createComputePipeline({
-    label: 'seed_tracers',
-    layout: 'auto',
-    compute: { module, entryPoint: 'seed_tracers' },
-  });
-  const updatePipe = device.createComputePipeline({
-    label: 'update_tracers',
-    layout: 'auto',
-    compute: { module, entryPoint: 'update_tracers' },
-  });
+  const { seedPipe, updatePipe } = await withValidationScope(device, 'tracers', () => ({
+    seedPipe: computePipeline(device, {
+      label: 'seed_tracers',
+      layout: 'auto',
+      compute: { module, entryPoint: 'seed_tracers' },
+    }),
+    updatePipe: computePipeline(device, {
+      label: 'update_tracers',
+      layout: 'auto',
+      compute: { module, entryPoint: 'update_tracers' },
+    }),
+  }));
 
   const uniform = device.createBuffer({
     size: TRACER_PARAM_BYTES,
@@ -78,28 +81,36 @@ function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): void {
   const paramData = new ArrayBuffer(TRACER_PARAM_BYTES);
   const dv = new DataView(paramData);
 
-  let seedBG: GPUBindGroup;
-  let updateBG: GPUBindGroup;
-
-  function rebuildBindGroups(vel: GPUBuffer) {
-    seedBG = device.createBindGroup({
-      layout: seedPipe.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: uniform } },
-        { binding: 1, resource: { buffer: tracers.pool } },
-        { binding: 2, resource: { buffer: tracers.counter } },
-        { binding: 3, resource: { buffer: vel } },
-      ],
-    });
-    updateBG = device.createBindGroup({
-      layout: updatePipe.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: uniform } },
-        { binding: 1, resource: { buffer: tracers.pool } },
-        { binding: 2, resource: { buffer: tracers.counter } },
-        { binding: 3, resource: { buffer: vel } },
-      ],
-    });
+  // Auto layouts only contain bindings an entry point uses: `seed_tracers`
+  // has no `vel` (3) and `update_tracers` has no `slot_counter` (2).
+  const seedBG: GPUBindGroup = device.createBindGroup({
+    label: 'seed_tracers',
+    layout: seedPipe.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniform } },
+      { binding: 1, resource: { buffer: tracers.pool } },
+      { binding: 2, resource: { buffer: tracers.counter } },
+    ],
+  });
+  // `update_tracers` reads whichever vel buffer is current; the sim ping-pongs
+  // two, so cache one bind group per vel buffer instead of rebuilding per call.
+  const updateBGs = new Map<GPUBuffer, GPUBindGroup>();
+  function updateBindGroup(vel: GPUBuffer): GPUBindGroup {
+    let bg = updateBGs.get(vel);
+    if (!bg) {
+      if (updateBGs.size >= 4) updateBGs.clear(); // grid rebuilds replace vel buffers
+      bg = device.createBindGroup({
+        label: 'update_tracers',
+        layout: updatePipe.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: uniform } },
+          { binding: 1, resource: { buffer: tracers.pool } },
+          { binding: 3, resource: { buffer: vel } },
+        ],
+      });
+      updateBGs.set(vel, bg);
+    }
+    return bg;
   }
 
   function packTracerParams(p: Params, spawnCount: number, seed: number) {
@@ -131,7 +142,6 @@ function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): void {
     update: boolean,
   ) {
     const pool = tracerPoolSize(p);
-    rebuildBindGroups(vel);
     packTracerParams(p, spawnCount, seed);
     device.queue.writeBuffer(uniform, 0, paramData);
 
@@ -146,7 +156,7 @@ function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): void {
 
     if (update) {
       pass.setPipeline(updatePipe);
-      pass.setBindGroup(0, updateBG);
+      pass.setBindGroup(0, updateBindGroup(vel));
       pass.dispatchWorkgroups(wg(pool, 128));
     }
 

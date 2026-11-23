@@ -3,7 +3,13 @@ import type { Droplets } from '../sim/droplets';
 import type { Fields } from '../sim/fields';
 import { MAX_EMITTERS } from '../sim/emitters';
 import { tracerPoolSize, type TracerSystem } from '../sim/tracers';
-import { blendedColorTarget, opaqueColorTarget, renderPipeline } from './webgpu';
+import {
+  blendedColorTarget,
+  compileShaderModule,
+  opaqueColorTarget,
+  renderPipeline,
+  withValidationScope,
+} from './webgpu';
 
 import commonSrc from '../shaders/common.wgsl?raw';
 import renderSrc from '../shaders/render.wgsl?raw';
@@ -34,52 +40,62 @@ export async function createRenderer(
   tracers: TracerSystem,
   _params: Params,
 ): Promise<Renderer> {
-  const module = device.createShaderModule({
-    label: 'render',
-    code: commonSrc + '\n' + renderSrc,
-  });
+  const module = await compileShaderModule(device, 'render', [
+    { name: 'common.wgsl', code: commonSrc },
+    { name: 'render.wgsl', code: renderSrc },
+  ]);
 
-  const overlayPipe = renderPipeline(device, {
-    label: 'overlay',
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs_fullscreen' },
-    fragment: { module, entryPoint: 'fs_overlay', targets: [opaqueColorTarget(format)] },
-    primitive: { topology: 'triangle-list' },
-  });
-  const arrowPipe = renderPipeline(device, {
-    label: 'arrows',
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs_arrows' },
-    fragment: { module, entryPoint: 'fs_arrows', targets: [blendedColorTarget(format)] },
-    primitive: { topology: 'line-list' },
-  });
-  const dropPipe = renderPipeline(device, {
-    label: 'droplets',
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs_drops' },
-    fragment: { module, entryPoint: 'fs_drops', targets: [blendedColorTarget(format)] },
-    primitive: { topology: 'triangle-list' },
-  });
-  const emitterPipe = renderPipeline(device, {
-    label: 'emitter',
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs_emitter' },
-    fragment: { module, entryPoint: 'fs_emitter', targets: [blendedColorTarget(format)] },
-    primitive: { topology: 'triangle-list' },
-  });
-  const streakPipe = renderPipeline(device, {
-    label: 'tracer_streaks',
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs_tracer_streaks' },
-    fragment: { module, entryPoint: 'fs_tracers', targets: [blendedColorTarget(format)] },
-    primitive: { topology: 'line-list' },
-  });
-  const tracerDotPipe = renderPipeline(device, {
-    label: 'tracer_dots',
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs_tracer_dots' },
-    fragment: { module, entryPoint: 'fs_tracers', targets: [blendedColorTarget(format)] },
-    primitive: { topology: 'triangle-list' },
+  const {
+    overlayPipe,
+    arrowPipe,
+    dropPipe,
+    emitterPipe,
+    streakPipe,
+    tracerDotPipe,
+  } = await withValidationScope(device, 'render', () => {
+    const overlayPipe = renderPipeline(device, {
+      label: 'overlay',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_fullscreen' },
+      fragment: { module, entryPoint: 'fs_overlay', targets: [opaqueColorTarget(format)] },
+      primitive: { topology: 'triangle-list' },
+    });
+    const arrowPipe = renderPipeline(device, {
+      label: 'arrows',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_arrows' },
+      fragment: { module, entryPoint: 'fs_arrows', targets: [blendedColorTarget(format)] },
+      primitive: { topology: 'line-list' },
+    });
+    const dropPipe = renderPipeline(device, {
+      label: 'droplets',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_drops' },
+      fragment: { module, entryPoint: 'fs_drops', targets: [blendedColorTarget(format)] },
+      primitive: { topology: 'triangle-list' },
+    });
+    const emitterPipe = renderPipeline(device, {
+      label: 'emitter',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_emitter' },
+      fragment: { module, entryPoint: 'fs_emitter', targets: [blendedColorTarget(format)] },
+      primitive: { topology: 'triangle-list' },
+    });
+    const streakPipe = renderPipeline(device, {
+      label: 'tracer_streaks',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_tracer_streaks' },
+      fragment: { module, entryPoint: 'fs_tracers', targets: [blendedColorTarget(format)] },
+      primitive: { topology: 'line-list' },
+    });
+    const tracerDotPipe = renderPipeline(device, {
+      label: 'tracer_dots',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_tracer_dots' },
+      fragment: { module, entryPoint: 'fs_tracers', targets: [blendedColorTarget(format)] },
+      primitive: { topology: 'triangle-list' },
+    });
+    return { overlayPipe, arrowPipe, dropPipe, emitterPipe, streakPipe, tracerDotPipe };
   });
 
   const uniform = device.createBuffer({

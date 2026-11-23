@@ -9,6 +9,26 @@
 @group(0) @binding(8) var<storage, read_write> acc_m : array<atomic<i32>>;
 @group(0) @binding(9) var<storage, read_write> acc_wet : array<atomic<i32>>;
 
+// Per-emitter parameters for this substep. Layout: EMITTER_PARAMS_LAYOUT in
+// src/sim/simParamsUniform.ts (48-byte stride). MAX_EMITTERS is injected by
+// step.ts from src/sim/emitters.ts. `emit` / `air_inject` dispatch with
+// workgroup_id.y = emitter index, so every emitter in one pass reads its own row.
+struct EmitterParams {
+  x      : f32,
+  y      : f32,
+  angle  : f32,
+  spread : f32,
+  speed  : f32,
+  count  : u32,
+  kind   : u32,
+  r_min  : f32,
+  r_max  : f32,
+  seed   : u32,
+  _pad0  : u32,
+  _pad1  : u32,
+};
+@group(0) @binding(10) var<uniform> E : array<EmitterParams, MAX_EMITTERS>;
+
 fn fixed_pt(v: f32) -> i32 {
   return i32(clamp(round(v), -2.0e9, 2.0e9));
 }
@@ -42,21 +62,23 @@ fn deposit_ground(
 
 @compute @workgroup_size(64)
 fn emit(@builtin(global_invocation_id) gid: vec3u) {
-  if (gid.x >= P.emit_count) { return; }
-  var seed = pcg(P.seed ^ (gid.x * 0x9E3779B9u + 1u));
+  if (gid.y >= P.emitter_count) { return; }
+  let em = E[gid.y];
+  if (em.kind != 0u || gid.x >= em.count) { return; }
+  var seed = pcg(em.seed ^ (gid.x * 0x9E3779B9u + 1u));
 
   let slot = atomicAdd(&emit_counter, 1u) % P.max_droplets;
 
-  let a = P.emit_angle + (rand01(&seed) - 0.5) * 2.0 * P.emit_spread;
+  let a = em.angle + (rand01(&seed) - 0.5) * 2.0 * em.spread;
   let dir = vec2f(sin(a), cos(a));
-  let speed = P.emit_speed * (0.8 + 0.4 * rand01(&seed));
-  let r = P.r_min * pow(P.r_max / P.r_min, rand01(&seed));
+  let speed = em.speed * (0.8 + 0.4 * rand01(&seed));
+  let r = em.r_min * pow(em.r_max / em.r_min, rand01(&seed));
 
   let jx = (rand01(&seed) - 0.5) * 0.04;
   let jy = (rand01(&seed) - 0.5) * 0.04;
 
   var d : Droplet;
-  d.pos = vec2f(P.emit_x + jx, P.emit_y + jy);
+  d.pos = vec2f(em.x + jx, em.y + jy);
   d.vel = dir * speed;
   d.radius = r;
   d.alive = 1u;
@@ -154,16 +176,18 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
 @compute @workgroup_size(64)
 // Pure momentum injection — no droplets, mass, humidity, or latent heat.
 fn air_inject(@builtin(global_invocation_id) gid: vec3u) {
-  if (gid.x >= P.emit_count) { return; }
-  var seed = pcg(P.seed ^ (gid.x * 0x9E3779B9u + 77u));
+  if (gid.y >= P.emitter_count) { return; }
+  let em = E[gid.y];
+  if (em.kind != 1u || gid.x >= em.count) { return; }
+  var seed = pcg(em.seed ^ (gid.x * 0x9E3779B9u + 77u));
 
-  let a = P.emit_angle + (rand01(&seed) - 0.5) * 2.0 * P.emit_spread;
+  let a = em.angle + (rand01(&seed) - 0.5) * 2.0 * em.spread;
   let dir = vec2f(sin(a), cos(a));
-  let speed = P.emit_speed * (0.75 + 0.5 * rand01(&seed));
+  let speed = em.speed * (0.75 + 0.5 * rand01(&seed));
   let reach = 0.08 + rand01(&seed) * 0.38;
   let jx = (rand01(&seed) - 0.5) * 0.05;
   let jy = (rand01(&seed) - 0.5) * 0.05;
-  let pos = vec2f(P.emit_x + jx, P.emit_y + jy) + dir * reach;
+  let pos = vec2f(em.x + jx, em.y + jy) + dir * reach;
 
   let nx = i32(P.nx);
   let ny = i32(P.ny);
