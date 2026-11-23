@@ -37,7 +37,12 @@ export interface Sim {
   rebuildBindGroups: () => void;
   setFields: (f: Fields) => void;
   reset: (p: Params) => void;
-  step: (p: Params) => void;
+  /**
+   * Record every substep of one frame into `enc` (nothing is submitted here).
+   * Uniform/staging uploads are issued with `queue.writeBuffer` before return,
+   * so the caller just finishes and submits `enc` once.
+   */
+  step: (p: Params, enc: GPUCommandEncoder) => void;
 }
 
 /** Bind groups that depend on which half of the vel/T/q ping-pong is current. */
@@ -66,8 +71,10 @@ interface ParityBindGroups {
  *
  * 1. Every substep's global `Params` and its full emitter array are packed into
  *    one slot of a staging buffer, and the staging buffer is written once.
- * 2. Each substep's encoder starts with `copyBufferToBuffer` from its slot into
- *    the live `Params` uniform and the live `EmitterParams` array.
+ * 2. Each substep starts with `copyBufferToBuffer` from its slot into the live
+ *    `Params` uniform and the live `EmitterParams` array. All substeps (and the
+ *    tracer passes) are recorded into the caller's encoder: one command buffer
+ *    per frame, shared with the environment and field render passes.
  * 3. All water emitters emit in **one** `emit` dispatch and all air emitters in
  *    one `air_inject` dispatch; `workgroup_id.y` selects the emitter row.
  *
@@ -343,12 +350,12 @@ export async function createSim(
   }
 
   function recordSubstep(
+    enc: GPUCommandEncoder,
     p: Params,
     stagingBuffer: GPUBuffer,
     slot: number,
     plan: SubstepPlan,
-  ): GPUCommandBuffer {
-    const enc: GPUCommandEncoder = device.createCommandEncoder({ label: 'sim substep' });
+  ): void {
     const slotBase = slot * SUBSTEP_UPLOAD_LAYOUT.STRIDE;
     enc.copyBufferToBuffer(
       stagingBuffer,
@@ -420,7 +427,6 @@ export async function createSim(
     pass.dispatchWorkgroups(...grid2d);
 
     pass.end();
-    return enc.finish();
   }
 
   const sim: Sim = {
@@ -447,7 +453,7 @@ export async function createSim(
       }
     },
 
-    step(p: Params): void {
+    step(p: Params, enc: GPUCommandEncoder): void {
       const substeps = p.substeps;
       const { buffer, writer } = ensureStaging(substeps);
       const plans: SubstepPlan[] = [];
@@ -463,18 +469,20 @@ export async function createSim(
         plans.push(plan);
         t += p.dt;
       }
-      // One queue write for the whole frame, before any substep is submitted.
-      // Each substep copies its own slot inside its command buffer.
+      // One queue write for the whole frame, before the frame is submitted.
+      // Each substep copies its own slot inside the encoder.
       device.queue.writeBuffer(buffer, 0, writer.buffer, 0, substeps * SUBSTEP_UPLOAD_LAYOUT.STRIDE);
 
+      tracers?.begin();
       for (let s = 0; s < substeps; s++) {
-        device.queue.submit([recordSubstep(p, buffer, s, plans[s])]);
+        recordSubstep(enc, p, buffer, s, plans[s]);
         if (tracers && p.showTracers) {
-          tracers.step(device, fields.vel0, p, seed++);
+          tracers.step(enc, fields.vel0, p, seed++);
         }
         swapAdvectBuffers();
         time += p.dt;
       }
+      tracers?.flush();
       sim.time = time;
       sim.frame = ++frame;
     },

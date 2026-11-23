@@ -16,8 +16,6 @@ import {
   type FieldDiagnosticsBuffers,
 } from './render/fieldDiagnostics';
 import { configureWebGPUCanvas, getWebGPUContext } from './render/webgpu';
-import type { VelSampler } from './render/velSampler';
-import { createVelSampler } from './render/velSampler';
 import { setupControls } from './ui/controls';
 import { setupPresets } from './ui/presets';
 import { setupAdvanced, type AdvancedControls } from './ui/advanced';
@@ -28,10 +26,7 @@ import { setupShare } from './ui/share';
 import { setupHelp } from './ui/help';
 import { applySavedState, loadStateFromHash, type ApplyStateResult } from './sim/state';
 import { tickBurst } from './sim/burst';
-import { createGrassLayer } from './render/grass';
-import { createTreesLayer } from './render/trees';
-import { createBackyardLayer } from './render/backyard';
-import { drawEnvironmentOverlay, needsVelSampler } from './render/environment';
+import { createEnvironmentRenderer, type EnvironmentRenderer } from './render/environment';
 import { setupCanvasResize } from './render/canvasSize';
 import { requestGpuDevice, type GpuContext } from './render/gpuDevice';
 import { $, $button, setText, setTextClass } from './ui/dom';
@@ -73,11 +68,10 @@ async function init(): Promise<void> {
   let drops: Droplets | null = null;
   let sim: Sim | null = null;
   let renderer: Renderer | null = null;
-  let velSampler: VelSampler | null = null;
+  let env: EnvironmentRenderer | null = null;
   let diagnostics: FieldDiagnosticsBuffers | null = null;
   let advanced: AdvancedControls | null = null;
   let cleanupCanvasResize: (() => void) | null = null;
-  let grassRebuild: (() => void) | null = null;
 
   function pauseSim(): void {
     params.paused = true;
@@ -98,37 +92,39 @@ async function init(): Promise<void> {
   }
 
   async function rebuildGridIfNeeded(): Promise<void> {
-    if (!gpuReady || !device || !fields || !sim || !velSampler || !renderer || !diagnostics) return;
+    if (!gpuReady || !device || !fields || !sim || !renderer || !diagnostics) return;
     const need = fields.n !== params.nx * params.ny;
     if (!need) return;
     fields.destroy();
     fields = createFields(device, params);
     sim.setFields(fields);
-    await velSampler.resize(device, params);
     renderer.rebuildBindGroups(fields);
     diagnostics.resize(device, params.nx * params.ny);
   }
 
   async function applySimulationChanges(result?: ApplyStateResult): Promise<void> {
-    if (!gpuReady || !device || !fields || !sim || !velSampler || !renderer || !diagnostics) return;
+    if (!gpuReady || !device || !fields || !sim || !renderer || !diagnostics) return;
     if (result?.needsGridRebuild) {
       fields.destroy();
       fields = createFields(device, params);
       sim.setFields(fields);
-      await velSampler.resize(device, params);
       renderer.rebuildBindGroups(fields);
       diagnostics.resize(device, params.nx * params.ny);
     } else {
       await rebuildGridIfNeeded();
     }
-    sim.reset(params);
+    resetSim();
     syncEmitterPanelUI(params);
     syncBurstUI(params);
   }
 
+  function resetSim(): void {
+    sim?.reset(params);
+    env?.reset();
+  }
+
   setupControls(params, {
-    onReset: () => sim?.reset(params),
-    onGrassDensity: () => grassRebuild?.(),
+    onReset: resetSim,
   });
   const share = setupShare(params, {
     onApply: (result: ApplyStateResult) => {
@@ -170,7 +166,6 @@ async function init(): Promise<void> {
   });
 
   const canvas = $<HTMLCanvasElement>('c');
-  const grassCanvas = $<HTMLCanvasElement>('grass-overlay');
   const canvasWrap = document.querySelector('.canvas-wrap') as HTMLElement;
   const gpuContext: GPUCanvasContext = getWebGPUContext(canvas);
   const format: GPUTextureFormat = navigator.gpu.getPreferredCanvasFormat();
@@ -181,11 +176,7 @@ async function init(): Promise<void> {
   const tracers: TracerSystem = await createTracerSystem(device);
   sim = await createSim(device, fields, drops, tracers, params);
   renderer = await createRenderer(device, format, fields, drops, tracers, params);
-  velSampler = createVelSampler(device, params);
-  const grass = createGrassLayer(grassCanvas, params);
-  grassRebuild = () => grass.rebuild(params);
-  const trees = createTreesLayer(grassCanvas);
-  const backyard = createBackyardLayer(grassCanvas);
+  env = await createEnvironmentRenderer(device, format);
 
   diagnostics = createFieldDiagnosticsBuffers(device, params.nx * params.ny);
 
@@ -197,14 +188,13 @@ async function init(): Promise<void> {
 
   cleanupCanvasResize = setupCanvasResize({
     container: canvasWrap,
-    canvases: [canvas, grassCanvas],
+    canvases: [canvas],
     onResize: () => {
       configureWebGPUCanvas(gpuContext, device!, format);
-      grass.resize(grassCanvas.width, grassCanvas.height);
     },
   });
 
-  sim.reset(params);
+  resetSim();
   gpuReady = true;
 
   let diagBusy = false;
@@ -241,39 +231,37 @@ async function init(): Promise<void> {
   let wasBursting = false;
 
   function frame(): void {
-    if (!simRunning || !sim || !renderer || !velSampler || !fields) return;
+    if (!simRunning || !sim || !renderer || !env || !fields || !device) return;
     const now = performance.now();
     const dt = Math.min(0.05, (now - lastFrame) / 1000);
     lastFrame = now;
 
+    // One command buffer per frame: sim substeps (+ tracers), environment
+    // state update, then the field + environment render pass. The environment
+    // binds the post-step velocity buffer directly; nothing is mapped.
+    const enc = device.createCommandEncoder({ label: 'frame' });
     if (!params.paused) {
       tickBurst(params, dt);
-      sim.step(params);
-      renderer.rebuildBindGroups(sim.getFields());
+      sim.step(params, enc);
     }
     const bursting = params.burstRemaining > 0;
     if (bursting || wasBursting) syncBurstUI(params);
     wasBursting = bursting;
 
     const currentFields = sim.getFields();
-    velSampler.scheduleRead(device!, currentFields, params, needsVelSampler(params));
+    renderer.rebuildBindGroups(currentFields);
+    env.update(enc, params, currentFields, sim.time, dt, canvas.width, canvas.height);
+    const stylized = env;
     renderer.draw(
+      enc,
       gpuContext.getCurrentTexture().createView(),
       params,
       currentFields,
       canvas.width,
       canvas.height,
+      (pass) => stylized.draw(pass, params),
     );
-    drawEnvironmentOverlay(
-      grassCanvas,
-      params,
-      sim.time,
-      dt,
-      velSampler,
-      grass,
-      trees,
-      backyard,
-    );
+    device.queue.submit([enc.finish()]);
 
     framesSinceFps++;
     if (now - lastFps > 500) {

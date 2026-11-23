@@ -41,6 +41,15 @@ const MODULES = [
   { name: 'pressure', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['divergence', 'jacobi', 'project'] },
   { name: 'tracers', consumer: 'src/sim/tracers.ts', generated: false, entryPoints: ['seed_tracers', 'update_tracers'] },
   {
+    name: 'environment',
+    consumer: 'src/render/environment.ts',
+    generated: true,
+    entryPoints: [
+      'env_update', 'vs_env_backdrop', 'fs_env_backdrop', 'vs_env_shapes', 'fs_env_shapes',
+      'vs_env_strokes', 'fs_env_strokes',
+    ],
+  },
+  {
     name: 'render',
     consumer: 'src/render/overlays.ts',
     generated: false,

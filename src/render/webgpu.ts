@@ -2,7 +2,7 @@ import type { WgslSource } from '../shaders/wgsl';
 
 /**
  * Shared WebGPU helpers used by the sim (`step.ts`), renderer (`overlays.ts`),
- * and CPU readback paths (`fieldDiagnostics.ts`, `velSampler.ts`).
+ * environment (`environment.ts`), and the HUD readback (`fieldDiagnostics.ts`).
  *
  * Pipelines use `layout: 'auto'`; bind-group layouts are inferred from the first
  * `createBindGroup` call after pipeline creation.
