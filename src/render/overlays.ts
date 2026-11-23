@@ -21,7 +21,19 @@ const EMITTER_VERTS = 93;
 
 export interface Renderer {
   rebuildBindGroups: (f: Fields) => void;
-  draw: (view: GPUTextureView, p: Params, f: Fields, canvasW: number, canvasH: number) => void;
+  /**
+   * Record the field render pass into `enc` (not submitted). `drawAfter` runs
+   * inside the same pass after the field layers, e.g. the stylized environment.
+   */
+  draw: (
+    enc: GPUCommandEncoder,
+    view: GPUTextureView,
+    p: Params,
+    f: Fields,
+    canvasW: number,
+    canvasH: number,
+    drawAfter?: (pass: GPURenderPassEncoder) => void,
+  ) => void;
 }
 
 /**
@@ -191,7 +203,7 @@ export async function createRenderer(
   return {
     rebuildBindGroups,
 
-    draw(view, p, f, canvasW, canvasH) {
+    draw(enc, view, p, f, canvasW, canvasH, drawAfter) {
       let o = 0;
       dv.setUint32(o, p.nx, true); o += 4;
       dv.setUint32(o, p.ny, true); o += 4;
@@ -225,7 +237,6 @@ export async function createRenderer(
       }
       device.queue.writeBuffer(emitterBuf, 0, emitVis);
 
-      const enc = device.createCommandEncoder();
       const pass = enc.beginRenderPass({
         colorAttachments: [{
           view,
@@ -271,8 +282,9 @@ export async function createRenderer(
         pass.draw(EMITTER_VERTS, p.emitters.length);
       }
 
+      drawAfter?.(pass);
+
       pass.end();
-      device.queue.submit([enc.finish()]);
     },
   };
 }

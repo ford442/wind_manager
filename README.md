@@ -246,6 +246,7 @@ The `src/` tree uses **`strict: true`** (`tsconfig.json`), ESLint with `@typescr
 | Sim uniforms | `sim/simParamsUniform.ts` | 84-byte `Params` layout documented; matches `common.wgsl` |
 | WebGPU helpers | `render/webgpu.ts` | Pipelines, blend targets, readback buffers |
 | Diagnostics | `render/fieldDiagnostics.ts` | GPU→CPU field scan for HUD stats |
+| Stylized scene | `render/environment.ts`, `shaders/environment.wgsl` | Grass, trees, houses, clouds, mist, ground wetness drawn in WebGPU from the velocity buffer; no CPU readback |
 | WGSL imports | `shaders/wgsl.ts` | `WgslSource` branded `?raw` strings |
 | DOM | `ui/dom.ts` | Typed `$` / `$input` / `$button` helpers |
 
