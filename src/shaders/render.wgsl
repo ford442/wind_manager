@@ -36,6 +36,16 @@ struct EmitterVis {
 @group(0) @binding(7) var<storage, read> tracers : array<Tracer>;
 @group(0) @binding(8) var<storage, read> q_dep : array<f32>;
 
+// Bilinear velocity lookup on this module's `vel` binding.
+fn sample_vel(pos: vec2f, h: f32, nx: i32, ny: i32) -> vec2f {
+  let b = bilin_at(pos, h, nx, ny);
+  return bilin_blend(
+    b,
+    vel[cell_index(b.i0, b.j0, nx)], vel[cell_index(b.i1, b.j0, nx)],
+    vel[cell_index(b.i0, b.j1, nx)], vel[cell_index(b.i1, b.j1, nx)],
+  );
+}
+
 fn world_to_clip(p: vec2f) -> vec2f {
   let dom = vec2f(f32(R.nx), f32(R.ny)) * R.h;
   return p / dom * 2.0 - 1.0;
@@ -513,7 +523,7 @@ fn vs_tracer_streaks(@builtin(vertex_index) vi: u32) -> TracerOut {
 
   let nx = i32(R.nx);
   let ny = i32(R.ny);
-  let sp = length(sample_vel(tr.pos, R.h, nx, ny, &vel));
+  let sp = length(sample_vel(tr.pos, R.h, nx, ny));
   let fade = tracer_fade(tr.age);
   let p = select(tr.prev_pos, tr.pos, endpt == 1u);
   o.pos = vec4f(world_to_clip(p), 0.0, 1.0);
@@ -536,7 +546,7 @@ fn vs_tracer_dots(@builtin(vertex_index) vi: u32) -> TracerOut {
 
   let nx = i32(R.nx);
   let ny = i32(R.ny);
-  let sp = length(sample_vel(tr.pos, R.h, nx, ny, &vel));
+  let sp = length(sample_vel(tr.pos, R.h, nx, ny));
   let fade = tracer_fade(tr.age);
   let px = 0.0022 + clamp(sp * 0.00035, 0.0, 0.004);
   let c = world_to_clip(tr.pos);
