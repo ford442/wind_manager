@@ -33,6 +33,7 @@ import { createTreesLayer } from './render/trees';
 import { createBackyardLayer } from './render/backyard';
 import { drawEnvironmentOverlay, needsVelSampler } from './render/environment';
 import { setupCanvasResize } from './render/canvasSize';
+import { requestGpuDevice, type GpuContext } from './render/gpuDevice';
 import { $, $button, setText, setTextClass } from './ui/dom';
 
 const DIAG_INTERVAL = 30;
@@ -153,19 +154,11 @@ async function init(): Promise<void> {
   setupBurst(params);
   setupHelp();
 
-  if (!navigator.gpu) {
-    fail(
-      'This browser does not expose WebGPU (navigator.gpu is missing). ' +
-        'Use a recent Chrome/Edge, or enable WebGPU in your browser.',
-    );
-    return;
-  }
-  const adapter: GPUAdapter | null = await navigator.gpu.requestAdapter();
-  if (!adapter) {
-    fail('No WebGPU adapter available on this machine.');
-    return;
-  }
-  device = await adapter.requestDevice();
+  // Throws with a readable message (missing WebGPU, no adapter, or the name of
+  // an unmet limit); `init().catch` below surfaces it in the error panel.
+  const gpu: GpuContext = await requestGpuDevice(params);
+  device = gpu.device;
+  // `gpu.timestampQuery` reports whether GPU timing is available; absence is fine.
   device.lost.then((info) => {
     handleGpuFatal(`GPU device lost (${info.reason}). Reload the page to restart.`);
   });
@@ -185,7 +178,7 @@ async function init(): Promise<void> {
 
   fields = createFields(device, params);
   drops = createDroplets(device, params);
-  const tracers: TracerSystem = createTracerSystem(device);
+  const tracers: TracerSystem = await createTracerSystem(device);
   sim = await createSim(device, fields, drops, tracers, params);
   renderer = await createRenderer(device, format, fields, drops, tracers, params);
   velSampler = createVelSampler(device, params);

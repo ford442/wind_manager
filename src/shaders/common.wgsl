@@ -25,28 +25,25 @@ const QDEP_DECAY    : f32 = 0.06;
 const QDEP_INTEG    : f32 = 3.2;
 
 struct Params {
-  // Layout documented in src/sim/simParamsUniform.ts (84 bytes).
-  nx          : u32,
-  ny          : u32,
-  h           : f32,
-  dt          : f32,
-  t_amb       : f32,
-  q_amb       : f32,
-  latent_on   : f32,
-  time        : f32,
-  emit_x      : f32,
-  emit_y      : f32,
-  emit_angle  : f32,
-  emit_spread : f32,
-  emit_speed  : f32,
-  emit_count  : u32,
-  emit_type   : u32,
-  r_min       : f32,
-  r_max       : f32,
-  max_droplets: u32,
-  seed        : u32,
-  relax       : f32,
-  damp        : f32,
+  // Global per-substep values. Layout: SIM_PARAMS_LAYOUT in
+  // src/sim/simParamsUniform.ts (64 bytes). Per-emitter data lives in
+  // `EmitterParams` (droplets.wgsl), not here.
+  nx           : u32,
+  ny           : u32,
+  h            : f32,
+  dt           : f32,
+  t_amb        : f32,
+  q_amb        : f32,
+  latent_on    : f32,
+  time         : f32,
+  max_droplets : u32,
+  seed         : u32,
+  relax        : f32,
+  damp         : f32,
+  emitter_count: u32,
+  _pad0        : u32,
+  _pad1        : u32,
+  _pad2        : u32,
 };
 
 struct Droplet {

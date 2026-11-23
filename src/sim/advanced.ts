@@ -21,6 +21,10 @@ export interface AdvancedSanitizeResult {
   needsGridRebuild: boolean;
 }
 
+/** Largest grid `sanitizeAdvancedParams` allows; device limits are sized from this. */
+export const GRID_MAX_NX = 512;
+export const GRID_MAX_NY = 256;
+
 function snapGrid(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n / 8) * 8));
 }
@@ -40,8 +44,8 @@ export function sanitizeAdvancedParams(
 
   const nxIn = p.nx;
   const nyIn = p.ny;
-  p.nx = snapGrid(p.nx, 64, 512);
-  p.ny = snapGrid(p.ny, 64, 256);
+  p.nx = snapGrid(p.nx, 64, GRID_MAX_NX);
+  p.ny = snapGrid(p.ny, 64, GRID_MAX_NY);
   if (p.nx !== nxIn) adjusted.push(`Grid width snapped to ${p.nx} (multiple of 8)`);
   if (p.ny !== nyIn) adjusted.push(`Grid height snapped to ${p.ny} (multiple of 8)`);
 
