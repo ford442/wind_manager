@@ -108,15 +108,10 @@ fn bilin_at(pos: vec2f, h: f32, nx: i32, ny: i32) -> Bilin {
   return b;
 }
 
-fn sample_vel(pos: vec2f, h: f32, nx: i32, ny: i32, vel: ptr<storage, array<vec2f>, read>) -> vec2f {
-  let b = bilin_at(pos, h, nx, ny);
-  let k00 = cell_index(b.i0, b.j0, nx);
-  let k10 = cell_index(b.i1, b.j0, nx);
-  let k01 = cell_index(b.i0, b.j1, nx);
-  let k11 = cell_index(b.i1, b.j1, nx);
-  return mix(
-    mix((*vel)[k00], (*vel)[k10], b.fx),
-    mix((*vel)[k01], (*vel)[k11], b.fx),
-    b.fy,
-  );
+// Bilinear blend of four corner samples with a Bilin's weights. Callers load the
+// corners from their own `vel` binding: a helper taking `ptr<storage, ...>` needs
+// the WGSL `unrestricted_pointer_parameters` extension, which Naga (CI validator,
+// Firefox) does not implement.
+fn bilin_blend(b: Bilin, v00: vec2f, v10: vec2f, v01: vec2f, v11: vec2f) -> vec2f {
+  return mix(mix(v00, v10, b.fx), mix(v01, v11, b.fx), b.fy);
 }

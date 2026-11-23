@@ -17,6 +17,16 @@ struct TracerParams {
 @group(0) @binding(2) var<storage, read_write> slot_counter : atomic<u32>;
 @group(0) @binding(3) var<storage, read> vel : array<vec2f>;
 
+// Bilinear velocity lookup on this module's `vel` binding.
+fn sample_vel(pos: vec2f, h: f32, nx: i32, ny: i32) -> vec2f {
+  let b = bilin_at(pos, h, nx, ny);
+  return bilin_blend(
+    b,
+    vel[cell_index(b.i0, b.j0, nx)], vel[cell_index(b.i1, b.j0, nx)],
+    vel[cell_index(b.i0, b.j1, nx)], vel[cell_index(b.i1, b.j1, nx)],
+  );
+}
+
 @compute @workgroup_size(64)
 fn seed_tracers(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= T.spawn_count) { return; }
@@ -50,9 +60,9 @@ fn update_tracers(@builtin(global_invocation_id) gid: vec3u) {
   let nx = i32(T.nx);
   let ny = i32(T.ny);
 
-  let v0 = sample_vel(tr.pos, T.h, nx, ny, &vel);
+  let v0 = sample_vel(tr.pos, T.h, nx, ny);
   let mid = tr.pos + v0 * (T.dt * 0.5);
-  let v1 = sample_vel(mid, T.h, nx, ny, &vel);
+  let v1 = sample_vel(mid, T.h, nx, ny);
 
   tr.prev_pos = tr.pos;
   tr.pos = tr.pos + v1 * T.dt;
