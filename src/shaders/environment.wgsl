@@ -33,8 +33,8 @@ const OBJ_THREADS : u32 = 16u;
 const SH_CLOUD : u32 = 0u;                       // 4 ellipses per cloud
 const SH_MIST  : u32 = 20u;                      // 1 gradient ellipse per sample
 const SH_HOUSE : u32 = 38u;                      // HOUSE_PRIMS per house
-const HOUSE_PRIMS : u32 = 10u;
-const SH_TREE  : u32 = 68u;                      // TREE_PRIMS per tree
+const HOUSE_PRIMS : u32 = 12u;
+const SH_TREE  : u32 = 74u;                      // TREE_PRIMS per tree
 const TREE_PRIMS : u32 = 11u;
 
 // Stroke instance ranges (vs_env_strokes).
@@ -80,10 +80,20 @@ struct TreeDef {
   b : vec4f, // sampleYFrac, trunkTau, foliageTau, windAmp
 };
 
+// Solid obstacle, exactly as src/sim/solids.ts rasterized it into the sim's
+// mask (metres; `packSolidDefs`). Houses are ids 0..N_HOUSES-1 in layout
+// order, then one trunk per tree. Houses and trunks are drawn from these so
+// what blocks the wind is what is on screen.
+struct SolidDef {
+  a : vec4f, // x0, x1, top (body box: [x0, x1] x [0, top]), kind (0 house, 1 trunk)
+  b : vec4f, // roof apex x, roof half base, roof height, layout index
+};
+
 struct SceneLayout {
   trees  : array<TreeDef, N_TREES>,
   houses : array<vec4f, N_HOUSES>, // xFrac, wFrac, hFrac, chimney (0/1)
   clouds : array<vec4f, N_CLOUDS>, // xFrac, yFrac, s, phase
+  solids : array<SolidDef, N_SOLIDS>,
 };
 
 @group(0) @binding(0) var<uniform> E : EnvParams;
@@ -92,6 +102,7 @@ struct SceneLayout {
 @group(0) @binding(3) var<storage, read> scene : SceneLayout;
 @group(0) @binding(4) var<storage, read> tf : array<f32>;
 @group(0) @binding(5) var<storage, read> qf : array<f32>;
+// Ground columns [0, nx), then wall faces (`solid_face_slot`).
 @group(0) @binding(6) var<storage, read> wet : array<f32>;
 @group(0) @binding(7) var<storage, read> q_dep : array<f32>;
 @group(0) @binding(8) var<storage, read_write> state_rw : array<f32>;
@@ -184,16 +195,22 @@ fn blade_def(i: u32) -> Blade {
   return b;
 }
 
-fn house_px(hd: vec4f) -> vec4f {
-  // hx (px), ground y (px), wPx, hPx
-  let wx = hd.x * E.domain_w;
-  let hw = hd.y * E.domain_w;
-  let hh = hd.z * E.domain_h;
-  return vec4f(world_to_px(vec2f(wx, 0.0)), hw / E.domain_w * E.canvas_w, hh / E.domain_h * E.canvas_h);
+// House body from its rasterized solid: centre x (px), ground y (px), w, h (px).
+fn house_px(hi: u32) -> vec4f {
+  let sd = scene.solids[hi].a;
+  let ground = world_to_px(vec2f(0.5 * (sd.x + sd.y), 0.0));
+  let top = world_to_px(vec2f(0.0, sd.z)).y;
+  return vec4f(ground, (sd.y - sd.x) * px_per_m(), ground.y - top);
 }
 
-fn house_vx(hd: vec4f) -> f32 {
-  return sample_vel(vec2f(hd.x * E.domain_w, hd.z * E.domain_h * 0.35)).x;
+// Wind at the flag / chimney: just above the roof apex, outside the solid.
+fn house_vx(hi: u32) -> f32 {
+  let sd = scene.solids[hi];
+  return sample_vel(vec2f(sd.b.x, sd.a.z + sd.b.z + 2.0 * E.h)).x;
+}
+
+fn face_wet(id: u32, face: u32) -> f32 {
+  return clamp(wet[solid_face_slot(i32(E.nx), id, face)], 0.0, 1.0);
 }
 
 // --- 1. State update ---------------------------------------------------------
@@ -227,7 +244,7 @@ fn env_update(@builtin(global_invocation_id) gid: vec3u) {
 
   if (g < N_TREES + N_HOUSES) {
     let i = g - N_TREES;
-    let vx = house_vx(scene.houses[i]);
+    let vx = house_vx(i);
     state_rw[S_FLAG + i] = low_pass_rate(state_rw[S_FLAG + i], vx * px_per_m() * 0.55, 5.5, dt);
     return;
   }
@@ -424,7 +441,8 @@ fn mist_shape(i: u32) -> Shape {
 fn house_shape(hi: u32, k: u32) -> Shape {
   if (!has(F_HOUSES)) { return no_shape(); }
   let hd = scene.houses[hi];
-  let hp = house_px(hd);
+  let hp = house_px(hi);
+  let roof = scene.solids[hi].b;
   let hx = hp.x;
   let gy = hp.y;
   let w = hp.z;
@@ -437,7 +455,8 @@ fn house_shape(hi: u32, k: u32) -> Shape {
   switch (k) {
     case 0u: { return rect_tl(hx - w * 0.5, gy - h, w, h, vec4f(rgb(0x334155u), 1.0)); }
     case 1u: {
-      return Shape(vec2f(hx, gy - h), vec2f(w * 0.5 + 5.0, h * 0.55), 0.0, K_TRI, 0.0, vec4f(rgb(0x1e2937u), 1.0));
+      // Same triangle the mask steps through (solids.ts `inRoof`).
+      return Shape(vec2f(hx, gy - h), vec2f(roof.y, roof.z) * px_per_m(), 0.0, K_TRI, 0.0, vec4f(rgb(0x1e2937u), 1.0));
     }
     case 2u: { return rect_tl(hx - w * 0.28, gy - h * 0.68, win_w, win_h, vec4f(rgb(0x64748bu), 1.0)); }
     case 3u: { return rect_tl(hx + w * 0.12, gy - h * 0.68, win_w, win_h, vec4f(rgb(0x64748bu), 1.0)); }
@@ -450,11 +469,20 @@ fn house_shape(hi: u32, k: u32) -> Shape {
       if (!chimney) { return no_shape(); }
       return rect_tl(chim_x, chim_base - h * 0.18, w * 0.08, h * 0.18, vec4f(rgb(0x475569u), 1.0));
     }
+    // Spray-wetted walls darken from the struck side inwards.
+    case 10u, 11u: {
+      let face = k - 10u;
+      let wv = face_wet(hi, face);
+      if (wv < 0.01) { return no_shape(); }
+      let band = w * (0.18 + 0.22 * wv);
+      let x = select(hx + w * 0.5 - band, hx - w * 0.5, face == 0u);
+      return rect_tl(x, gy - h, band, h, vec4f(rgb(0x0b1626u), 0.62 * wv));
+    }
     default: {
       if (!chimney) { return no_shape(); }
       let i = k - 7u;
       let t = f32(i) * 0.5;
-      let smoke_drift = state[S_FLAG + hi] * 0.35 + house_vx(hd) * px_per_m() * 0.2;
+      let smoke_drift = state[S_FLAG + hi] * 0.35 + house_vx(hi) * px_per_m() * 0.2;
       let sy = chim_base - h * (0.22 + t * 0.2);
       let sx = chim_x + w * 0.04 + smoke_drift * (0.4 + t * 0.5);
       let wobble = sin(E.sim_time * 2.2 + f32(hi) * 1.7 + f32(i)) * 3.0;
@@ -476,7 +504,8 @@ struct TreePx {
 fn tree_px(ti: u32) -> TreePx {
   let td = scene.trees[ti];
   var o : TreePx;
-  o.ground = world_to_px(vec2f(td.a.x * E.domain_w, 0.0));
+  // Rooted on the trunk's rasterized column (snapped to the sim grid).
+  o.ground = world_to_px(vec2f(scene.solids[N_HOUSES + ti].b.x, 0.0));
   o.h_px = (td.a.y / E.domain_h) * E.canvas_h * td.a.z;
   o.trunk = state[S_TREE + ti * 2u];
   o.foliage = state[S_TREE + ti * 2u + 1u];
@@ -623,19 +652,20 @@ fn no_stroke() -> Stroke {
 
 fn trunk_stroke(ti: u32) -> Stroke {
   if (!has(F_TREES)) { return no_stroke(); }
-  let depth = scene.trees[ti].a.z;
   let tp = tree_px(ti);
   let top_sway = tp.foliage * 1.18;
   let mid_sway = tp.trunk * 0.72 + tp.foliage * 0.35;
-  var w = 4.0;
-  if (depth > 0.85) { w = 7.0; } else if (depth > 0.7) { w = 5.5; }
-  w *= depth;
+  // Base width is the rasterized trunk column (solids.ts trunkWidth by depth).
+  let sid = N_HOUSES + ti;
+  let sd = scene.solids[sid].a;
+  let w = max(1.5, (sd.y - sd.x) * px_per_m());
+  let wv = 0.5 * (face_wet(sid, 0u) + face_wet(sid, 1u));
   let g = tp.ground;
   return Stroke(
     g,
     vec2f(g.x + mid_sway * 0.38, g.y - tp.h_px * 0.52),
     vec2f(g.x + top_sway * 0.52, g.y - tp.h_px),
-    w, w * 0.8, vec4f(rgb(0x3f2a1fu), 1.0),
+    w, w * 0.8, vec4f(mix(rgb(0x3f2a1fu), rgb(0x1c1410u), wv), 1.0),
   );
 }
 
@@ -643,7 +673,7 @@ fn flag_stroke(hi: u32) -> Stroke {
   if (!has(F_HOUSES)) { return no_stroke(); }
   let hd = scene.houses[hi];
   if (hd.w > 0.5) { return no_stroke(); } // chimney houses have smoke instead
-  let hp = house_px(hd);
+  let hp = house_px(hi);
   let fx = hp.x + hp.z * 0.5 + 4.0;
   let fy = hp.y - hp.w - hp.w * 0.35;
   let fs = state[S_FLAG + hi];

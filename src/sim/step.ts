@@ -1,7 +1,7 @@
 import { effectiveEmitRate } from './burst';
 import type { Params } from './params';
 import { MAX_EMITTERS } from './emitters';
-import type { Fields } from './fields';
+import { SOLID_WET_SLOTS, type Fields } from './fields';
 import type { Droplets } from './droplets';
 import type { TracerSystem } from './tracers';
 import {
@@ -80,7 +80,11 @@ interface ParityBindGroups {
  *
  * ## Bind groups
  *
- * vel/T/q ping-pong each substep and p0/p1 ping-pong inside Jacobi. Both
+ * vel/T/q ping-pong each substep and p0/p1 ping-pong inside Jacobi. Scatter,
+ * droplets and advection read the current half (`vel0`/`T0`/`q0`); advection
+ * writes the other half, and buoyancy, the pressure solve and the boundary pass
+ * work on that advected half, which the swap then makes current. Every pass
+ * that touches velocity or scalars also binds the solid mask. Both
  * parities (and both Jacobi endings for `project`) are built once when the
  * buffer set changes (`setFields`), and the step picks one by buffer identity.
  * Nothing is allocated inside the substep loop.
@@ -187,8 +191,9 @@ export async function createSim(
     const projFor = (pFinal: GPUBuffer, label: string) =>
       bg(pipes.proj, label, [
         U,
-        { binding: 1, resource: { buffer: vel0 } },
+        { binding: 1, resource: { buffer: vel1 } },
         { binding: 3, resource: { buffer: pFinal } },
+        { binding: 5, resource: { buffer: fields.solid } },
       ]);
     return {
       update: bg(pipes.update, 'update', [
@@ -197,8 +202,8 @@ export async function createSim(
         { binding: 3, resource: { buffer: vel0 } },
         { binding: 4, resource: { buffer: T0 } },
         { binding: 5, resource: { buffer: q0 } },
-        { binding: 6, resource: { buffer: fields.accQ } },
-        { binding: 7, resource: { buffer: fields.accT } },
+        { binding: 6, resource: { buffer: fields.accQT } },
+        { binding: 7, resource: { buffer: fields.solid } },
         { binding: 8, resource: { buffer: fields.accM } },
         { binding: 9, resource: { buffer: fields.accWet } },
       ]),
@@ -207,8 +212,8 @@ export async function createSim(
         { binding: 1, resource: { buffer: vel0 } },
         { binding: 2, resource: { buffer: T0 } },
         { binding: 3, resource: { buffer: q0 } },
-        { binding: 4, resource: { buffer: fields.accQ } },
-        { binding: 5, resource: { buffer: fields.accT } },
+        { binding: 4, resource: { buffer: fields.accQT } },
+        { binding: 5, resource: { buffer: fields.solid } },
         { binding: 6, resource: { buffer: fields.accM } },
       ]),
       applyWet: bg(pipes.applyWet, 'apply_wet', [
@@ -226,29 +231,31 @@ export async function createSim(
         { binding: 4, resource: { buffer: vel1 } },
         { binding: 5, resource: { buffer: T1 } },
         { binding: 6, resource: { buffer: q1 } },
+        { binding: 7, resource: { buffer: fields.solid } },
       ]),
-      // NOTE: buoyancy / divergence / project / boundaries bind the advection
-      // *source* (vel0/T0/q0), matching the bindings before the recording-model
-      // change. After the swap the advected buffer is current, so this work does
-      // not reach the next substep. Kept as-is here (no physics change); tracked
-      // separately.
+      // Buoyancy, the pressure solve and the boundary pass act on the advected
+      // half (vel1/T1/q1), which becomes current after the swap. (They used to
+      // bind the advection source, so the next advection overwrote their work.)
       buoy: bg(pipes.buoy, 'buoyancy', [
         U,
-        { binding: 1, resource: { buffer: vel0 } },
-        { binding: 2, resource: { buffer: T0 } },
-        { binding: 3, resource: { buffer: q0 } },
+        { binding: 1, resource: { buffer: vel1 } },
+        { binding: 2, resource: { buffer: T1 } },
+        { binding: 3, resource: { buffer: q1 } },
+        { binding: 4, resource: { buffer: fields.solid } },
       ]),
       bound: bg(pipes.bound, 'boundaries', [
         U,
-        { binding: 1, resource: { buffer: vel0 } },
-        { binding: 2, resource: { buffer: T0 } },
-        { binding: 3, resource: { buffer: q0 } },
+        { binding: 1, resource: { buffer: vel1 } },
+        { binding: 2, resource: { buffer: T1 } },
+        { binding: 3, resource: { buffer: q1 } },
+        { binding: 4, resource: { buffer: fields.solid } },
       ]),
       div: bg(pipes.div, 'divergence', [
         U,
-        { binding: 1, resource: { buffer: vel0 } },
+        { binding: 1, resource: { buffer: vel1 } },
         { binding: 2, resource: { buffer: fields.div } },
         { binding: 4, resource: { buffer: fields.p0 } },
+        { binding: 5, resource: { buffer: fields.solid } },
       ]),
       proj: [projFor(fields.p0, 'project p0'), projFor(fields.p1, 'project p1')],
     };
@@ -268,7 +275,12 @@ export async function createSim(
     airBG = device.createBindGroup({
       label: 'air_inject',
       layout: pipes.air.getBindGroupLayout(0),
-      entries: [U, EP, { binding: 8, resource: { buffer: fields.accM } }],
+      entries: [
+        U,
+        EP,
+        { binding: 7, resource: { buffer: fields.solid } },
+        { binding: 8, resource: { buffer: fields.accM } },
+      ],
     });
     jacobiA = device.createBindGroup({
       label: 'jacobi p0→p1',
@@ -278,6 +290,7 @@ export async function createSim(
         { binding: 2, resource: { buffer: fields.div } },
         { binding: 3, resource: { buffer: fields.p0 } },
         { binding: 4, resource: { buffer: fields.p1 } },
+        { binding: 5, resource: { buffer: fields.solid } },
       ],
     });
     jacobiB = device.createBindGroup({
@@ -288,6 +301,7 @@ export async function createSim(
         { binding: 2, resource: { buffer: fields.div } },
         { binding: 3, resource: { buffer: fields.p1 } },
         { binding: 4, resource: { buffer: fields.p0 } },
+        { binding: 5, resource: { buffer: fields.solid } },
       ],
     });
     const { vel0, vel1, T0, T1, q0, q1 } = fields;
@@ -396,7 +410,7 @@ export async function createSim(
 
     pass.setPipeline(pipes.applyWet);
     pass.setBindGroup(0, bg.applyWet);
-    pass.dispatchWorkgroups(wg(p.nx, 64));
+    pass.dispatchWorkgroups(wg(p.nx + SOLID_WET_SLOTS, 64));
 
     const grid2d: Workgroup2D = wg2d(p.nx, p.ny, 8, 8);
 
@@ -449,7 +463,7 @@ export async function createSim(
       drops.reset(device.queue);
       tracers?.reset(device.queue);
       if (tracers && p.showTracers) {
-        tracers.seedBurst(device, fields.vel0, p, seed++);
+        tracers.seedBurst(device, fields.vel0, fields.solid, p, seed++);
       }
     },
 
@@ -476,10 +490,11 @@ export async function createSim(
       tracers?.begin();
       for (let s = 0; s < substeps; s++) {
         recordSubstep(enc, p, buffer, s, plans[s]);
-        if (tracers && p.showTracers) {
-          tracers.step(enc, fields.vel0, p, seed++);
-        }
         swapAdvectBuffers();
+        // Tracers ride the velocity this substep produced.
+        if (tracers && p.showTracers) {
+          tracers.step(enc, fields.vel0, fields.solid, p, seed++);
+        }
         time += p.dt;
       }
       tracers?.flush();

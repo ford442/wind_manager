@@ -130,6 +130,7 @@ export async function createRenderer(
   let boundQ0: GPUBuffer | null = null;
   let boundWet: GPUBuffer | null = null;
   let boundQDep: GPUBuffer | null = null;
+  let boundSolid: GPUBuffer | null = null;
 
   function rebuildBindGroups(f: Fields): void {
     if (
@@ -137,7 +138,8 @@ export async function createRenderer(
       boundT0 === f.T0 &&
       boundQ0 === f.q0 &&
       boundWet === f.wet &&
-      boundQDep === f.qDep
+      boundQDep === f.qDep &&
+      boundSolid === f.solid
     ) {
       return;
     }
@@ -146,6 +148,7 @@ export async function createRenderer(
     boundQ0 = f.q0;
     boundWet = f.wet;
     boundQDep = f.qDep;
+    boundSolid = f.solid;
     const tracerEntries: GPUBindGroupEntry[] = [
       { binding: 0, resource: { buffer: uniform } },
       { binding: 1, resource: { buffer: f.vel0 } },
@@ -160,6 +163,7 @@ export async function createRenderer(
         { binding: 3, resource: { buffer: f.q0 } },
         { binding: 6, resource: { buffer: f.wet } },
         { binding: 8, resource: { buffer: f.qDep } },
+        { binding: 9, resource: { buffer: f.solid } },
       ],
     });
     arrowBG = device.createBindGroup({

@@ -35,6 +35,8 @@ export interface SavedState {
   tAmb: number;
   rhAmb: number;
   latentOn: boolean;
+  /** Optional in saved JSON / links made before obstacles existed (default true). */
+  solidObstacles: boolean;
   relax: number;
   damp: number;
   overlay: number;
@@ -103,6 +105,7 @@ export function serializeState(p: Params): SavedState {
     tAmb: p.tAmb,
     rhAmb: p.rhAmb,
     latentOn: p.latentOn,
+    solidObstacles: p.solidObstacles,
     relax: p.relax,
     damp: p.damp,
     overlay: p.overlay,
@@ -177,6 +180,7 @@ export function parseSavedState(raw: unknown): { state: SavedState } | { error: 
     tAmb: num(o.tAmb, defs.tAmb),
     rhAmb: num(o.rhAmb, defs.rhAmb),
     latentOn: bool(o.latentOn, defs.latentOn),
+    solidObstacles: bool(o.solidObstacles, defs.solidObstacles),
     relax: num(o.relax, defs.relax),
     damp: num(o.damp, defs.damp),
     overlay: num(o.overlay, defs.overlay),
@@ -217,6 +221,7 @@ export function applySavedState(target: Params, saved: SavedState): ApplyStateRe
   target.tAmb = saved.tAmb;
   target.rhAmb = saved.rhAmb;
   target.latentOn = saved.latentOn;
+  target.solidObstacles = saved.solidObstacles;
   target.relax = saved.relax;
   target.damp = saved.damp;
   target.overlay = saved.overlay;

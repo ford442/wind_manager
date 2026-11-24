@@ -24,6 +24,18 @@ const WET_DECAY     : f32 = 0.85;
 const QDEP_DECAY    : f32 = 0.06;
 const QDEP_INTEG    : f32 = 3.2;
 
+// Solid obstacles (src/sim/solids.ts). The mask holds 0 for fluid and
+// `id + 1` inside solid `id`; houses first, then tree trunks. Wall wetness
+// lives after the `nx` ground columns of `wet`: slot `nx + id * 2 + face`,
+// face 0 = left wall, 1 = right wall.
+const N_SOLIDS      : u32 = 8u;
+const N_SOLID_FACES : u32 = 2u;
+// Share of an impacting drop's along-wall velocity shed into the air (the
+// wall counterpart of GROUND_SPLASH), and of wall water that runs down to wet
+// the ground column at the foot of the wall.
+const WALL_SPLASH : f32 = 0.3;
+const WALL_DRAIN  : f32 = 0.35;
+
 struct Params {
   // Global per-substep values. Layout: SIM_PARAMS_LAYOUT in
   // src/sim/simParamsUniform.ts (64 bytes). Per-emitter data lives in
@@ -70,6 +82,26 @@ struct Bilin {
 
 fn cell_index(i: i32, j: i32, nx: i32) -> i32 {
   return j * nx + i;
+}
+
+fn solid_face_slot(nx: i32, id: u32, face: u32) -> i32 {
+  return nx + i32(id * N_SOLID_FACES + face);
+}
+
+// Bilinear corner weights (w00, w10, w01, w11) with solid corners dropped and
+// the rest renormalized. `fluid` holds 1.0 per fluid corner, same order. All
+// zero when every corner is solid. Callers read the mask from their own binding.
+fn fluid_weights(b: Bilin, fluid: vec4f) -> vec4f {
+  let w = vec4f(
+    (1.0 - b.fx) * (1.0 - b.fy), b.fx * (1.0 - b.fy),
+    (1.0 - b.fx) * b.fy, b.fx * b.fy,
+  ) * fluid;
+  let s = w.x + w.y + w.z + w.w;
+  if (s > 1.0e-6) { return w / s; }
+  // Only corners with ~zero weight are fluid: split evenly among them.
+  let c = fluid.x + fluid.y + fluid.z + fluid.w;
+  if (c > 0.0) { return fluid / c; }
+  return vec4f(0.0);
 }
 
 fn q_sat(t_c: f32) -> f32 {

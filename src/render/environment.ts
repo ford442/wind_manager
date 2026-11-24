@@ -3,6 +3,7 @@ import type { Fields } from '../sim/fields';
 import { MAX_EMITTERS } from '../sim/emitters';
 import { UniformWriter } from '../sim/uniformWriter';
 import { LAYOUT } from './sceneData';
+import { N_SOLIDS, SOLID_DEF_FLOATS, packSolidDefs, type SolidLayout } from '../sim/solids';
 import {
   blendedColorTarget,
   compileShaderModule,
@@ -24,6 +25,10 @@ import environmentSrc from '../shaders/environment.wgsl?raw';
  *   drift) in a small GPU state buffer.
  * - {@link EnvironmentRenderer.draw}: issues the backdrop / shape / stroke draws
  *   inside the field render pass. Vertex shaders sample `vel` themselves.
+ *
+ * Houses and trunks are drawn from the solid boxes the sim rasterized
+ * (`Fields.solids`), re-uploaded whenever the mask is rewritten, so a drawn
+ * house covers exactly the cells that block the flow.
  *
  * Instance ranges and state offsets are constants in `environment.wgsl`; the
  * ones mirrored here must stay in sync with it.
@@ -54,8 +59,8 @@ const OBJ_THREADS = 16;
 const SH_CLOUD = 0;
 const SH_MIST = 20;
 const SH_HOUSE = 38;
-const HOUSE_PRIMS = 10;
-const SH_TREE = 68;
+const HOUSE_PRIMS = 12;
+const SH_TREE = 74;
 const TREE_PRIMS = 11;
 const ST_TRUNK = 0;
 const ST_FLAG = 5;
@@ -92,7 +97,9 @@ export const ENV_PARAMS_LAYOUT = {
   BYTE_LENGTH: 64 + MAX_EMITTERS * 16,
 } as const;
 
-const SCENE_BYTES = N_TREES * 32 + N_HOUSES * 16 + N_CLOUDS * 16;
+/** `SceneLayout.solids` starts after trees, houses and clouds. */
+const SCENE_SOLIDS_OFFSET = N_TREES * 32 + N_HOUSES * 16 + N_CLOUDS * 16;
+const SCENE_BYTES = SCENE_SOLIDS_OFFSET + N_SOLIDS * SOLID_DEF_FLOATS * 4;
 
 export function envOverlayActive(p: Params): boolean {
   if (!p.stylizedView) return false;
@@ -172,7 +179,7 @@ export async function createEnvironmentRenderer(
       { binding: 3, visibility: V, buffer: ro },
       { binding: 4, visibility: F, buffer: ro },
       { binding: 5, visibility: F, buffer: ro },
-      { binding: 6, visibility: F, buffer: ro },
+      { binding: 6, visibility: V | F, buffer: ro }, // wet: ground (F) + wall faces (V)
       { binding: 7, visibility: F, buffer: ro },
     ],
   });
@@ -287,6 +294,13 @@ export async function createEnvironmentRenderer(
     return group;
   }
 
+  let uploadedSolids: SolidLayout | null = null;
+  function syncSolids(f: Fields): void {
+    if (uploadedSolids === f.solids) return;
+    uploadedSolids = f.solids;
+    device.queue.writeBuffer(scene, SCENE_SOLIDS_OFFSET, packSolidDefs(f.solids.boxes));
+  }
+
   const writer = new UniformWriter(ENV_PARAMS_LAYOUT.BYTE_LENGTH);
   const L = ENV_PARAMS_LAYOUT;
   let frameGroup: GPUBindGroup | null = null;
@@ -302,6 +316,7 @@ export async function createEnvironmentRenderer(
     update(enc, p, f, simTime, dt, canvasW, canvasH) {
       frameGroup = null;
       if (!p.stylizedView) return;
+      syncSolids(f);
       const nBlades = bladeCount(p);
       const stiffness = Math.max(0.02, Math.min(0.98, p.grassStiffness));
       writer.u32(L.nx, p.nx);

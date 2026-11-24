@@ -125,6 +125,12 @@ async function init(): Promise<void> {
 
   setupControls(params, {
     onReset: resetSim,
+    // Rewrite the mask in place (no reset): the next substep's boundary pass
+    // clears velocity inside the new solids.
+    onSolidObstacles: () => {
+      if (device && fields) fields.writeSolids(device.queue, params);
+      share.notifyChange();
+    },
   });
   const share = setupShare(params, {
     onApply: (result: ApplyStateResult) => {

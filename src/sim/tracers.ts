@@ -30,11 +30,11 @@ export interface TracerSystem {
    * copied inside the encoder, so several substeps in one command buffer each
    * see their own seed. Call {@link TracerSystem.flush} before submitting.
    */
-  step: (enc: GPUCommandEncoder, vel: GPUBuffer, p: Params, seed: number) => void;
+  step: (enc: GPUCommandEncoder, vel: GPUBuffer, solid: GPUBuffer, p: Params, seed: number) => void;
   /** Upload the staging slots recorded since `begin`. Call before `submit`. */
   flush: () => void;
   /** Seed a burst and submit immediately (sim reset, outside the frame loop). */
-  seedBurst: (device: GPUDevice, vel: GPUBuffer, p: Params, seed: number) => void;
+  seedBurst: (device: GPUDevice, vel: GPUBuffer, solid: GPUBuffer, p: Params, seed: number) => void;
 }
 
 export async function createTracerSystem(device: GPUDevice): Promise<TracerSystem> {
@@ -56,9 +56,9 @@ export async function createTracerSystem(device: GPUDevice): Promise<TracerSyste
       queue.writeBuffer(counter, 0, new Uint32Array(1));
     },
     begin() {},
-    step(_enc, _vel, _p, _seed) {},
+    step(_enc, _vel, _solid, _p, _seed) {},
     flush() {},
-    seedBurst(_device, _vel, _p, _seed) {},
+    seedBurst(_device, _vel, _solid, _p, _seed) {},
     destroy() {
       pool.destroy();
       counter.destroy();
@@ -125,35 +125,45 @@ async function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): Pr
   }
 
   // Auto layouts only contain bindings an entry point uses: `seed_tracers`
-  // has no `vel` (3) and `update_tracers` has no `slot_counter` (2).
-  const seedBG: GPUBindGroup = device.createBindGroup({
-    label: 'seed_tracers',
-    layout: seedPipe.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: uniform } },
-      { binding: 1, resource: { buffer: tracers.pool } },
-      { binding: 2, resource: { buffer: tracers.counter } },
-    ],
-  });
-  // `update_tracers` reads whichever vel buffer is current; the sim ping-pongs
-  // two, so cache one bind group per vel buffer instead of rebuilding per call.
-  const updateBGs = new Map<GPUBuffer, GPUBindGroup>();
-  function updateBindGroup(vel: GPUBuffer): GPUBindGroup {
-    let bg = updateBGs.get(vel);
-    if (!bg) {
-      if (updateBGs.size >= 4) updateBGs.clear(); // grid rebuilds replace vel buffers
-      bg = device.createBindGroup({
-        label: 'update_tracers',
-        layout: updatePipe.getBindGroupLayout(0),
+  // has no `vel` (3) and `update_tracers` has no `slot_counter` (2). Both read
+  // the solid mask (4), which a grid rebuild replaces.
+  let seedBG: GPUBindGroup | null = null;
+  let seedSolid: GPUBuffer | null = null;
+  function seedBindGroup(solid: GPUBuffer): GPUBindGroup {
+    if (!seedBG || seedSolid !== solid) {
+      seedSolid = solid;
+      seedBG = device.createBindGroup({
+        label: 'seed_tracers',
+        layout: seedPipe.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer: uniform } },
           { binding: 1, resource: { buffer: tracers.pool } },
-          { binding: 3, resource: { buffer: vel } },
+          { binding: 2, resource: { buffer: tracers.counter } },
+          { binding: 4, resource: { buffer: solid } },
         ],
       });
-      updateBGs.set(vel, bg);
     }
-    return bg;
+    return seedBG;
+  }
+  // `update_tracers` reads whichever vel buffer is current; the sim ping-pongs
+  // two, so cache one bind group per vel buffer instead of rebuilding per call.
+  const updateBGs = new Map<GPUBuffer, { group: GPUBindGroup; solid: GPUBuffer }>();
+  function updateBindGroup(vel: GPUBuffer, solid: GPUBuffer): GPUBindGroup {
+    const hit = updateBGs.get(vel);
+    if (hit && hit.solid === solid) return hit.group;
+    if (updateBGs.size >= 4) updateBGs.clear(); // grid rebuilds replace vel buffers
+    const group = device.createBindGroup({
+      label: 'update_tracers',
+      layout: updatePipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: uniform } },
+        { binding: 1, resource: { buffer: tracers.pool } },
+        { binding: 3, resource: { buffer: vel } },
+        { binding: 4, resource: { buffer: solid } },
+      ],
+    });
+    updateBGs.set(vel, { group, solid });
+    return group;
   }
 
   function packTracerParams(slot: number, p: Params, spawnCount: number, seed: number) {
@@ -180,6 +190,7 @@ async function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): Pr
   function recordPass(
     enc: GPUCommandEncoder,
     vel: GPUBuffer,
+    solid: GPUBuffer,
     p: Params,
     seed: number,
     spawnCount: number,
@@ -196,13 +207,13 @@ async function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): Pr
 
     if (spawnCount > 0) {
       pass.setPipeline(seedPipe);
-      pass.setBindGroup(0, seedBG);
+      pass.setBindGroup(0, seedBindGroup(solid));
       pass.dispatchWorkgroups(wg(spawnCount, 64));
     }
 
     if (update) {
       pass.setPipeline(updatePipe);
-      pass.setBindGroup(0, updateBindGroup(vel));
+      pass.setBindGroup(0, updateBindGroup(vel, solid));
       pass.dispatchWorkgroups(wg(pool, 128));
     }
 
@@ -219,7 +230,7 @@ async function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): Pr
     }
   };
 
-  tracers.step = (enc, vel, p, seed) => {
+  tracers.step = (enc, vel, solid, p, seed) => {
     if (!p.showTracers) return;
     const spawnCount = Math.max(
       0,
@@ -228,15 +239,15 @@ async function initTracerPipelines(device: GPUDevice, tracers: TracerSystem): Pr
         Math.round((p.tracerDensity * p.dt) / Math.max(1, p.substeps)),
       ),
     );
-    recordPass(enc, vel, p, seed, spawnCount, true);
+    recordPass(enc, vel, solid, p, seed, spawnCount, true);
   };
 
-  tracers.seedBurst = (device, vel, p, seed) => {
+  tracers.seedBurst = (device, vel, solid, p, seed) => {
     const pool = tracerPoolSize(p);
     const burst = Math.min(pool, Math.ceil(p.tracerDensity * p.tracerLifetime * 0.85));
     const enc = device.createCommandEncoder({ label: 'tracer burst' });
     tracers.begin();
-    recordPass(enc, vel, p, seed, burst, true);
+    recordPass(enc, vel, solid, p, seed, burst, true);
     tracers.flush();
     device.queue.submit([enc.finish()]);
     tracers.begin();
