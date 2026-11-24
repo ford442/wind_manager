@@ -16,6 +16,14 @@ struct TracerParams {
 @group(0) @binding(1) var<storage, read_write> tracers : array<Tracer>;
 @group(0) @binding(2) var<storage, read_write> slot_counter : atomic<u32>;
 @group(0) @binding(3) var<storage, read> vel : array<vec2f>;
+@group(0) @binding(4) var<storage, read> solid : array<u32>;
+
+fn in_solid(pos: vec2f, h: f32, nx: i32, ny: i32) -> bool {
+  let i = i32(floor(pos.x / h));
+  let j = i32(floor(pos.y / h));
+  if (i < 0 || j < 0 || i >= nx || j >= ny) { return false; }
+  return solid[cell_index(i, j, nx)] != 0u;
+}
 
 // Bilinear velocity lookup on this module's `vel` binding.
 fn sample_vel(pos: vec2f, h: f32, nx: i32, ny: i32) -> vec2f {
@@ -43,7 +51,8 @@ fn seed_tracers(@builtin(global_invocation_id) gid: vec3u) {
   tr.pos = pos;
   tr.prev_pos = pos;
   tr.age = 0.0;
-  tr.alive = 1u;
+  // A seed that lands inside a house or trunk is simply not born.
+  tr.alive = select(1u, 0u, in_solid(pos, T.h, i32(T.nx), i32(T.ny)));
   tr.tint = rand01(&rng);
   tr._pad = 0.0;
   tracers[slot] = tr;
@@ -64,8 +73,25 @@ fn update_tracers(@builtin(global_invocation_id) gid: vec3u) {
   let mid = tr.pos + v0 * (T.dt * 0.5);
   let v1 = sample_vel(mid, T.h, nx, ny);
 
+  // Never step into a solid: slide along the wall on whichever axis stays in
+  // fluid, otherwise hold position (streaks wrap around obstacles).
+  let step = v1 * T.dt;
+  var next = tr.pos + step;
+  if (in_solid(next, T.h, nx, ny)) {
+    let slide_x = tr.pos + vec2f(step.x, 0.0);
+    let slide_y = tr.pos + vec2f(0.0, step.y);
+    if (!in_solid(slide_x, T.h, nx, ny) && abs(step.x) >= abs(step.y)) {
+      next = slide_x;
+    } else if (!in_solid(slide_y, T.h, nx, ny)) {
+      next = slide_y;
+    } else if (!in_solid(slide_x, T.h, nx, ny)) {
+      next = slide_x;
+    } else {
+      next = tr.pos;
+    }
+  }
   tr.prev_pos = tr.pos;
-  tr.pos = tr.pos + v1 * T.dt;
+  tr.pos = next;
   tr.age += T.dt;
 
   let dom_w = f32(nx) * T.h;

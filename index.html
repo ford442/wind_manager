@@ -105,7 +105,7 @@
     .label { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; }
     .toggle-row { display: flex; align-items: center; gap: 10px; }
     .toggle-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
-    #latent-state { font-size: 12px; color: var(--accent); }
+    #latent-state, #solid-state { font-size: 12px; color: var(--accent); }
     .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
     button {
       background: #17222f; color: var(--text); border: 1px solid var(--border);
@@ -399,6 +399,14 @@
           <div class="toggle-row" title="When ON, evaporation cools air and drives downdraft. OFF = momentum-only updraft.">
             <input type="checkbox" id="latent-toggle" checked title="Toggle evaporative cooling (latent heat)">
             <span id="latent-state">ON — evaporative cooling → downdraft</span>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="label">Obstacles</div>
+          <div class="toggle-row" title="Houses and tree trunks are solid: wind goes around and over them, spray wets their walls. OFF = visual overlays only.">
+            <input type="checkbox" id="solid-toggle" checked title="Toggle solid houses and trunks">
+            <span id="solid-state">Solid — houses and trunks block wind and catch spray</span>
           </div>
         </div>
 

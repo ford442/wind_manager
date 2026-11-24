@@ -167,7 +167,7 @@ export const SIM_PRESETS: SimPreset[] = [
   {
     id: 'tree-shake',
     label: '100 ft tree shake — hero demo',
-    hint: 'Hose at the left fence; outflow travels ~90+ ft to the tall canopy on the right.',
+    hint: 'Hose at the left fence; the outflow rides over and around the three houses and travels ~90+ ft to the tall canopy on the right.',
     patch: {
       latentOn: true,
       overlay: 1,
@@ -193,6 +193,38 @@ export const SIM_PRESETS: SimPreset[] = [
         speed: 15,
         rate: 16500,
         rMinUm: 30,
+        rMaxUm: 500,
+      }),
+    ],
+  },
+  {
+    id: 'house-spray',
+    label: 'Spray into the left house — wall splash + lateral gust',
+    hint: 'Hose aimed flat at the first house: the wall gets wet, cooled air sheds along the wall and floor instead of through the house.',
+    patch: {
+      latentOn: true,
+      solidObstacles: true,
+      overlay: 1,
+      tAmb: 32,
+      rhAmb: 15,
+      showHouses: true,
+      showTrees: true,
+      showGrass: true,
+      showWetGround: true,
+      showTracers: true,
+      showTracerStreaks: true,
+      showArrows: true,
+      showDroplets: true,
+    },
+    emitters: [
+      // ~2 m short of house 0's left wall (LAYOUT.houses[0], x ≈ 8.4 m on the default yard).
+      em('water', LAYOUT.houses[0].xFrac - 0.08, 0.35, {
+        useFrac: true,
+        angleDeg: 76,
+        spreadDeg: 7,
+        speed: 12,
+        rate: 12000,
+        rMinUm: 40,
         rMaxUm: 500,
       }),
     ],

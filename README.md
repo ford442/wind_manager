@@ -78,7 +78,8 @@ The solver stays in WGSL on the GPU. `ref/` is not a second simulator: it restat
 2. **Watch the temperature overlay** (default) — blue = cooled air sinking; warm colors rise with the spray.
 3. **Toggle latent heat OFF** — same spray geometry, but momentum-only updraft instead of downdraft (proof of mechanism).
 4. **Click the canvas** to place water emitters; **Shift+click** for pure air streams (momentum only).
-5. **Copy link** (Share panel) to bookmark or share an exact experiment.
+5. **Load *Spray into the left house*** — the wall gets wet and the gust sheds along it; toggle **Obstacles** OFF to see the old see-through houses.
+6. **Copy link** (Share panel) to bookmark or share an exact experiment.
 
 ---
 
@@ -98,7 +99,7 @@ Toggle **latent heat OFF** to disable evaporative cooling. The spray still pushe
 
 ### 3. Sinking air spreads along the floor
 
-The cold column hits the ground and fans outward as a **density current** — the gust that rattles distant leaves. Flow tracers (cyan streaks) ride this outflow. Grass bends with local velocity; the hero tree on the right sways when the gust arrives.
+The cold column hits the ground and fans outward as a **density current** — the gust that rattles distant leaves. Houses and tree trunks are solid: the current rides over and around them rather than through. Flow tracers (cyan streaks) ride this outflow. Grass bends with local velocity; the hero tree on the right sways when the gust arrives.
 
 **Air stream emitters** inject momentum only — no water, no humidity, no latent heat. Use them to steer or reinforce outflow without adding evaporation.
 
@@ -115,12 +116,22 @@ Coupled **Eulerian** fields (velocity **u**, temperature **T**, humidity **q**) 
 Each timestep (simplified):
 
 1. Emit droplets / air impulses from configured sources.
-2. Advect **u**, **T**, **q**.
-3. Update droplets (drag, gravity, evaporation, grid deposition).
-4. Apply scattered sources to **u**, **T**, **q** from droplet coupling.
-5. Buoyancy from virtual temperature → update **u**.
-6. Pressure projection (Jacobi Poisson solve) → divergence-free **u**.
-7. Boundary conditions (no-through floor, open sides).
+2. Update droplets (drag, gravity, evaporation, grid deposition, floor and wall contact).
+3. Apply scattered sources to **u**, **T**, **q** from droplet coupling.
+4. Advect **u**, **T**, **q** into the other half of the ping-pong buffers.
+5. Buoyancy from virtual temperature → update the advected **u**.
+6. Pressure projection (Jacobi Poisson solve, Neumann on solid faces) → divergence-free **u**.
+7. Boundary conditions (no-through floor, open sides and top, solid walls); the advected half becomes current.
+
+### Solid obstacles
+
+Houses and tree trunks from the shared backyard layout (`src/render/sceneData.ts`) are **solid**. On every reset (and when the domain, grid or the **Obstacles** toggle changes) `src/sim/solids.ts` rasterizes them into one per-cell mask (`Fields.solid`): each house is a box plus its stepped roof triangle, each trunk a narrow column up to half the tree height. Foliage stays porous (not modeled). The stylized scene draws houses and trunks from the same snapped boxes, so a house that blocks the wind sits on exactly the cells that block it; the field overlays hatch solid cells.
+
+- **Walls**: velocity inside a solid is zero, and a fluid cell next to a solid face loses the velocity component pointing into it. The floor (`j = 0`) stays a no-through floor.
+- **Pressure**: solid cells are not Jacobi unknowns; across a solid face the neighbour takes the centre pressure (Neumann), and the divergence stencil sees a zero-velocity wall. Velocity is never projected inside a solid.
+- **Advection**: velocity back-traces see the walls' zero velocity; **T** and **q** only blend fluid cells, so nothing is pulled out of a house.
+- **Spray**: a drop that enters a solid leaves its water the way floor contact does (vapor, a little latent cooling, splash momentum along the surface) on the fluid side, wets the face it struck (shown as a darkened wall), runs a share down to the ground at the wall's foot, and dies. Droplet and air-stream deposits only land in fluid cells, and an air stream stops at the first wall in its path.
+- **Tracers** are not seeded inside solids and slide along walls instead of stepping into them.
 
 ### d² evaporation law
 
@@ -165,7 +176,7 @@ Semi-implicit Stokes drag with Reynolds correction. Droplets feel gravity and in
 
 - Radiation, cloud microphysics, turbulence closures (LES/RANS)
 - Droplet–droplet interaction, breakup, or size sorting
-- Topography, buildings as obstacles (houses/trees are visual overlays)
+- Topography, moving obstacles, and canopy drag (houses and trunks are static solids; foliage is visual)
 - Coriolis, large-scale weather forcing
 
 ---
@@ -179,6 +190,7 @@ Schematic previews below — load the matching preset in-app for the full intera
 | **Strong vertical hose (left)** | Tight cold column, radial floor gust, grass bend | ![Vertical hose](public/gallery/downdraft-column.svg) |
 | **Latent heat OFF** | Same spray, but warm updraft — no evaporative cooling | ![Latent off](public/gallery/latent-off-updraft.svg) |
 | **100 ft tree shake** | Left fence hose; outflow travels ~90+ ft to hero tree | ![Tree shake](public/gallery/tree-shake.svg) |
+| **Spray into the left house** | Wet wall, gust shed along the wall and floor, nothing moving inside the house | — |
 | **Twin hoses** | Two columns; gusts collide and swirl near center | ![Dual hose](public/gallery/dual-hose.svg) |
 | **Water + air sources** | Evaporative downdraft plus momentum-only air steering | ![Water + air](public/gallery/water-plus-air.svg) |
 | **Low humidity / high temp** | Hot dry air → maximum evaporative cooling | ![Dry hot](public/gallery/dry-hot.svg) |
@@ -220,13 +232,14 @@ The playground remains at [`/prototype.html`](public/prototype.html). Shared dra
 - Backyard environment: grass, trees, houses, clouds, ground mist, wet ground
 - Presets, advanced solver controls, JSON export/import, URL hash sharing
 - Stable-fluids pressure projection (collocated grid + Jacobi)
+- Solid houses and tree trunks: the gust goes over and around them, spray wets their walls (**Obstacles** toggle)
 
 ### Module layout (`src/`)
 
 ```
 src/
   main.ts       WebGPU init + frame loop
-  sim/          params, fields, droplets, tracers, step, simParamsUniform, presets, state
+  sim/          params, fields, solids, droplets, tracers, step, simParamsUniform, presets, state
   render/       overlays, webgpu, fieldDiagnostics, grass, trees, sceneData
   ui/           controls, dom, emitters, presets, share, help
   shaders/      WGSL (?raw imports); wgsl.ts brands sources

@@ -4,9 +4,13 @@
 @group(0) @binding(3) var<storage, read> vel : array<vec2f>;
 @group(0) @binding(4) var<storage, read> tf : array<f32>;
 @group(0) @binding(5) var<storage, read> qf : array<f32>;
-@group(0) @binding(6) var<storage, read_write> acc_q : array<atomic<i32>>;
-@group(0) @binding(7) var<storage, read_write> acc_t : array<atomic<i32>>;
+// Humidity and temperature scatter, interleaved [q, T] per cell.
+@group(0) @binding(6) var<storage, read_write> acc_qt : array<atomic<i32>>;
+// Solid mask (0 fluid, id + 1 solid). `update` binds 8 storage buffers, the
+// WebGPU default per-stage limit (see requiredLimits in render/gpuDevice.ts).
+@group(0) @binding(7) var<storage, read> solid : array<u32>;
 @group(0) @binding(8) var<storage, read_write> acc_m : array<atomic<i32>>;
+// Wetness: nx ground columns, then N_SOLIDS * N_SOLID_FACES wall faces.
 @group(0) @binding(9) var<storage, read_write> acc_wet : array<atomic<i32>>;
 
 // Per-emitter parameters for this substep. Layout: EMITTER_PARAMS_LAYOUT in
@@ -34,19 +38,106 @@ fn fixed_pt(v: f32) -> i32 {
 }
 
 fn deposit(k: i32, w: f32, dq: f32, dtemp: f32, dvel: vec2f) {
-  atomicAdd(&acc_q[k], fixed_pt(w * dq * SCALE_Q));
-  atomicAdd(&acc_t[k], fixed_pt(w * dtemp * SCALE_T));
+  if (w <= 0.0) { return; }
+  atomicAdd(&acc_qt[2 * k], fixed_pt(w * dq * SCALE_Q));
+  atomicAdd(&acc_qt[2 * k + 1], fixed_pt(w * dtemp * SCALE_T));
   atomicAdd(&acc_m[2 * k], fixed_pt(w * dvel.x * SCALE_M));
   atomicAdd(&acc_m[2 * k + 1], fixed_pt(w * dvel.y * SCALE_M));
 }
 
 fn deposit_m(k: i32, w: f32, dvel: vec2f) {
+  if (w <= 0.0) { return; }
   atomicAdd(&acc_m[2 * k], fixed_pt(w * dvel.x * SCALE_M));
   atomicAdd(&acc_m[2 * k + 1], fixed_pt(w * dvel.y * SCALE_M));
 }
 
 fn deposit_wet(i: i32, w: f32, amount: f32) {
   atomicAdd(&acc_wet[i], fixed_pt(w * amount * SCALE_WET));
+}
+
+// Solid id at cell (i, j), or -1 for fluid / outside the grid.
+fn solid_id(i: i32, j: i32) -> i32 {
+  let nx = i32(P.nx);
+  if (i < 0 || j < 0 || i >= nx || j >= i32(P.ny)) { return -1; }
+  return i32(solid[cell_index(i, j, nx)]) - 1;
+}
+
+fn solid_at_pos(pos: vec2f) -> i32 {
+  return solid_id(i32(floor(pos.x / P.h)), i32(floor(pos.y / P.h)));
+}
+
+fn corner_fluid(b: Bilin) -> vec4f {
+  return vec4f(
+    select(1.0, 0.0, solid_id(b.i0, b.j0) >= 0), select(1.0, 0.0, solid_id(b.i1, b.j0) >= 0),
+    select(1.0, 0.0, solid_id(b.i0, b.j1) >= 0), select(1.0, 0.0, solid_id(b.i1, b.j1) >= 0),
+  );
+}
+
+// Bilinear scatter that only lands in fluid cells: air inside a house never
+// receives heat, vapor or momentum.
+fn deposit_fluid(pos: vec2f, dq: f32, dtemp: f32, dvel: vec2f) {
+  let nx = i32(P.nx);
+  let b = bilin_at(pos, P.h, nx, i32(P.ny));
+  let w = fluid_weights(b, corner_fluid(b));
+  deposit(cell_index(b.i0, b.j0, nx), w.x, dq, dtemp, dvel);
+  deposit(cell_index(b.i1, b.j0, nx), w.y, dq, dtemp, dvel);
+  deposit(cell_index(b.i0, b.j1, nx), w.z, dq, dtemp, dvel);
+  deposit(cell_index(b.i1, b.j1, nx), w.w, dq, dtemp, dvel);
+}
+
+fn deposit_m_fluid(pos: vec2f, dvel: vec2f) {
+  let nx = i32(P.nx);
+  let b = bilin_at(pos, P.h, nx, i32(P.ny));
+  let w = fluid_weights(b, corner_fluid(b));
+  deposit_m(cell_index(b.i0, b.j0, nx), w.x, dvel);
+  deposit_m(cell_index(b.i1, b.j0, nx), w.y, dvel);
+  deposit_m(cell_index(b.i0, b.j1, nx), w.z, dvel);
+  deposit_m(cell_index(b.i1, b.j1, nx), w.w, dvel);
+}
+
+// A drop that ends a substep inside a solid: leave its water on the face it
+// struck, like the floor does in `update` (vapor, a little latent cooling,
+// along-surface splash momentum), run some down to the ground, then die.
+// `p_from` is the last fluid position, `p_to` where the drop entered solid `id`.
+fn wall_contact(p_from: vec2f, p_to: vec2f, id: i32, v: vec2f, r: f32, mcell: f32) {
+  let m_liquid = RHO_W * (4.0 / 3.0) * PI * r * r * r;
+  if (m_liquid <= 1.0e-15) { return; }
+  let nx = i32(P.nx);
+  let fi = i32(floor(p_from.x / P.h));
+  let fj = i32(floor(p_from.y / P.h));
+  let ti = i32(floor(p_to.x / P.h));
+  let tj = i32(floor(p_to.y / P.h));
+  // Which face: the axis whose step alone enters the solid. A drop dropping
+  // onto a roof or trunk top crosses a horizontal face; one flying into a
+  // wall crosses a vertical face.
+  var side_hit = abs(p_to.x - p_from.x) * 1.0001 >= abs(p_to.y - p_from.y);
+  if (ti != fi && tj == fj) { side_hit = true; }
+  if (tj != fj && ti == fi) { side_hit = false; }
+  if (ti != fi && tj != fj) {
+    side_hit = solid_id(ti, fj) >= 0 && solid_id(fi, tj) < 0;
+  }
+
+  let dq_w = m_liquid / mcell;
+  var dtemp_w = 0.0;
+  if (P.latent_on > 0.5) {
+    dtemp_w = -(L_VAP * m_liquid * GROUND_TEMP) / (mcell * CP_AIR);
+  }
+  let wet_amt = clamp(dq_w / 2.0e-4, 0.02, 0.55);
+  var splash = vec2f(v.x * GROUND_SPLASH, 0.0);
+  let sid = u32(id);
+  if (side_hit) {
+    // Water runs up/down the wall; the cooled, splashed air leaves along it.
+    splash = vec2f(0.0, v.y * WALL_SPLASH);
+    let face = select(1u, 0u, p_to.x > p_from.x);
+    deposit_wet(solid_face_slot(nx, sid, face), 1.0 - WALL_DRAIN, wet_amt);
+  } else {
+    // Roof or trunk top: water sheds off both eaves.
+    let half_wet = 0.5 * (1.0 - WALL_DRAIN);
+    deposit_wet(solid_face_slot(nx, sid, 0u), half_wet, wet_amt);
+    deposit_wet(solid_face_slot(nx, sid, 1u), half_wet, wet_amt);
+  }
+  deposit_fluid(p_from, dq_w, dtemp_w, splash);
+  deposit_wet(clamp(fi, 0, nx - 1), WALL_DRAIN, wet_amt);
 }
 
 fn deposit_ground(
@@ -130,18 +221,37 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
   let m_drop = RHO_W * (4.0 / 3.0) * PI * d.radius * d.radius * d.radius;
   let dvel = -(m_drop * (vel_new - d.vel - gvec * P.dt)) / mcell;
 
-  let w00 = (1.0 - b.fx) * (1.0 - b.fy);
-  let w10 = b.fx * (1.0 - b.fy);
-  let w01 = (1.0 - b.fx) * b.fy;
-  let w11 = b.fx * b.fy;
-  deposit(k00, w00, dq, dtemp, dvel);
-  deposit(k10, w10, dq, dtemp, dvel);
-  deposit(k01, w01, dq, dtemp, dvel);
-  deposit(k11, w11, dq, dtemp, dvel);
+  let w = fluid_weights(b, corner_fluid(b));
+  deposit(k00, w.x, dq, dtemp, dvel);
+  deposit(k10, w.y, dq, dtemp, dvel);
+  deposit(k01, w.z, dq, dtemp, dvel);
+  deposit(k11, w.w, dq, dtemp, dvel);
 
+  let pos_prev = d.pos;
   d.vel = vel_new;
   d.pos = d.pos + vel_new * P.dt;
   d.radius = r_new;
+
+  // Solid contact. Test the midpoint too so a fast drop cannot skip a
+  // two-cell trunk in one substep.
+  var hit = -1;
+  var hit_at = d.pos;
+  let mid = 0.5 * (pos_prev + d.pos);
+  let hit_mid = solid_at_pos(mid);
+  if (hit_mid >= 0) {
+    hit = hit_mid;
+    hit_at = mid;
+  } else {
+    hit = solid_at_pos(d.pos);
+  }
+  if (hit >= 0 && d.pos.y > 0.0) {
+    var last_fluid = pos_prev;
+    if (hit_mid < 0) { last_fluid = mid; }
+    wall_contact(last_fluid, hit_at, hit, vel_new, r_new, mcell);
+    d.alive = 0u;
+    drops[di] = d;
+    return;
+  }
 
   let dom_w = f32(nx) * P.h;
   let ht = f32(ny) * P.h;
@@ -187,23 +297,18 @@ fn air_inject(@builtin(global_invocation_id) gid: vec3u) {
   let reach = 0.08 + rand01(&seed) * 0.38;
   let jx = (rand01(&seed) - 0.5) * 0.05;
   let jy = (rand01(&seed) - 0.5) * 0.05;
-  let pos = vec2f(em.x + jx, em.y + jy) + dir * reach;
+  let origin = vec2f(em.x + jx, em.y + jy);
+  if (solid_at_pos(origin) >= 0) { return; } // nozzle inside a house
 
-  let nx = i32(P.nx);
-  let ny = i32(P.ny);
-  let b = bilin_at(pos, P.h, nx, ny);
-  let k00 = cell_index(b.i0, b.j0, nx);
-  let k10 = cell_index(b.i1, b.j0, nx);
-  let k01 = cell_index(b.i0, b.j1, nx);
-  let k11 = cell_index(b.i1, b.j1, nx);
+  // Walk out along the jet in half-cell steps and stop in front of the first
+  // solid: an air stream pushes on a wall, it does not reach the far side.
+  var pos = origin;
+  let steps = u32(ceil(reach / (0.5 * P.h)));
+  for (var s = 1u; s <= steps; s++) {
+    let next = origin + dir * min(reach, f32(s) * 0.5 * P.h);
+    if (solid_at_pos(next) >= 0) { break; }
+    pos = next;
+  }
 
-  let impulse = dir * speed * 0.22;
-  let w00 = (1.0 - b.fx) * (1.0 - b.fy);
-  let w10 = b.fx * (1.0 - b.fy);
-  let w01 = (1.0 - b.fx) * b.fy;
-  let w11 = b.fx * b.fy;
-  deposit_m(k00, w00, impulse);
-  deposit_m(k10, w10, impulse);
-  deposit_m(k01, w01, impulse);
-  deposit_m(k11, w11, impulse);
+  deposit_m_fluid(pos, dir * speed * 0.22);
 }

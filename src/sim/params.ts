@@ -15,6 +15,9 @@ export interface Params {
 
   latentOn: boolean;
 
+  /** Houses and tree trunks block the flow and catch spray (solid mask). */
+  solidObstacles: boolean;
+
   emitters: Emitter[];
   selectedEmitterId: string | null;
 
@@ -79,6 +82,7 @@ export function defaultParams(): Params {
     rhAmb: 20,
 
     latentOn: true,
+    solidObstacles: true,
 
     emitters,
     selectedEmitterId: emitters[0]?.id ?? null,

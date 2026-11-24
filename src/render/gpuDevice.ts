@@ -59,7 +59,9 @@ export function largestStorageBufferBytes(p: Params): number {
 export function requiredLimits(p: Params): Record<NumericLimit, number> {
   const bytes = largestStorageBufferBytes(p);
   return {
-    // droplets.wgsl `update`: drops, vel, tf, qf, acc_q, acc_t, acc_m, acc_wet.
+    // droplets.wgsl `update`: drops, vel, tf, qf, acc_qt, solid, acc_m, acc_wet.
+    // This is the WebGPU default; keep it there (q/T scatter share one buffer
+    // and wall wetness rides in acc_wet so the solid mask fits).
     maxStorageBuffersPerShaderStage: 8,
     maxStorageBufferBindingSize: bytes,
     maxBufferSize: bytes,

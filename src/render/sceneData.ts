@@ -45,5 +45,21 @@ export const LAYOUT = {
   ],
 } as const;
 
+/**
+ * Solid-obstacle geometry (metres) that the physics mask and the WebGPU scene
+ * both read. `src/sim/solids.ts` rasterizes houses and trunks from `LAYOUT`
+ * with these numbers and `environment.wgsl` draws the boxes it produced.
+ */
+export const SOLID_GEOMETRY = {
+  /** Roof eave overhang past each wall (m). */
+  roofOverhang: 0.1,
+  /** Roof height as a fraction of the body height. */
+  roofHeightFrac: 0.55,
+  /** Trunk diameter (m) by tree depth, before scaling by depth. */
+  trunkWidth: { near: 0.14, mid: 0.11, far: 0.08 },
+  /** Solid part of a trunk, as a fraction of the drawn tree height (foliage above is not solid). */
+  trunkSolidFrac: 0.5,
+} as const;
+
 /** Scale world tree height (m) to playground canvas pixels. */
 export const PLAYGROUND_TREE_SCALE = 0.48;

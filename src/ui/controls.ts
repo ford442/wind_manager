@@ -46,9 +46,19 @@ function syncSlider(params: Params, id: string, key: SliderParamKey, fmt: (v: nu
   label.textContent = fmt(params[key]);
 }
 
+function solidStateText(on: boolean): string {
+  return on
+    ? 'Solid — houses and trunks block wind and catch spray'
+    : 'Off — houses and trees are visual only';
+}
+
 export function setupControls(
   params: Params,
-  { onReset, onGrassDensity }: { onReset: () => void; onGrassDensity?: () => void },
+  {
+    onReset,
+    onGrassDensity,
+    onSolidObstacles,
+  }: { onReset: () => void; onGrassDensity?: () => void; onSolidObstacles?: () => void },
 ) {
   bindCheckbox(
     'latent-toggle',
@@ -58,6 +68,16 @@ export function setupControls(
       $<HTMLElement>('latent-state').textContent = params.latentOn
         ? 'ON — evaporative cooling → downdraft'
         : 'OFF — momentum only → updraft';
+    },
+  );
+
+  bindCheckbox(
+    'solid-toggle',
+    () => params.solidObstacles,
+    (checked) => {
+      params.solidObstacles = checked;
+      $<HTMLElement>('solid-state').textContent = solidStateText(checked);
+      onSolidObstacles?.();
     },
   );
 
@@ -120,6 +140,8 @@ export function syncControlsUI(params: Params): void {
   $<HTMLElement>('latent-state').textContent = params.latentOn
     ? 'ON — evaporative cooling → downdraft'
     : 'OFF — momentum only → updraft';
+  $input('solid-toggle').checked = params.solidObstacles;
+  $<HTMLElement>('solid-state').textContent = solidStateText(params.solidObstacles);
 
   const modes: [string, number][] = [
     ['ov-none', 0],

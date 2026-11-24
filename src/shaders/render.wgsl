@@ -35,6 +35,8 @@ struct EmitterVis {
 @group(0) @binding(6) var<storage, read> wet : array<f32>;
 @group(0) @binding(7) var<storage, read> tracers : array<Tracer>;
 @group(0) @binding(8) var<storage, read> q_dep : array<f32>;
+// Solid mask (0 fluid, id + 1 solid); src/sim/solids.ts.
+@group(0) @binding(9) var<storage, read> solid : array<u32>;
 
 // Bilinear velocity lookup on this module's `vel` binding.
 fn sample_vel(pos: vec2f, h: f32, nx: i32, ny: i32) -> vec2f {
@@ -208,6 +210,16 @@ fn fs_overlay(in: FSOut) -> @location(0) vec4f {
     col += vec3f(0.06, 0.24, 0.34) * stain_rim * band * 0.16;
     let sparkle = sin(world.x * 48.0 + R.time * 8.0) * sin(world.x * 29.0 - R.time * 5.5);
     col += vec3f(0.18, 0.42, 0.55) * max(0.0, sparkle) * wv * band * 0.22;
+  }
+
+  // Solid obstacles, cell-exact (nearest cell, not bilinear): the field view
+  // shows exactly what the solver treats as wall. Hatched so they read as
+  // "no data" rather than a field value.
+  let ci = clamp(i32(floor(world.x / R.h)), 0, nx - 1);
+  let cj = clamp(i32(floor(world.y / R.h)), 0, ny - 1);
+  if (solid[cell_index(ci, cj, nx)] != 0u) {
+    let hatch = step(0.5, fract((world.x + world.y) / (R.h * 3.0)));
+    return vec4f(mix(vec3f(0.16, 0.19, 0.25), vec3f(0.21, 0.25, 0.32), hatch), 1.0);
   }
 
   if (R.show_wet > 0.5 && R.show_ground_moisture < 0.5 && R.mode != 3u && R.mode != 4u) {
