@@ -224,6 +224,7 @@ async function init(): Promise<void> {
         );
         setText('max-speed', `${Math.sqrt(sample.maxSpeedSquared).toFixed(2)} m/s`);
         setTextClass('max-speed', 'bad', sample.maxSpeedSquared > 3600);
+        setText('max-divergence', `${sample.maxDivergence.toExponential(2)} /s`);
       }
       setText('emitted', sample.emitted.toLocaleString());
     } finally {

@@ -2,6 +2,7 @@ import type { Params } from '../sim/params';
 import { DROPLET_STRIDE } from '../sim/droplets';
 import { TRACER_POOL_CAP, TRACER_STRIDE } from '../sim/tracers';
 import { GRID_MAX_NX, GRID_MAX_NY } from '../sim/advanced';
+import { PRESSURE_NODE_BYTES } from '../sim/pressure';
 
 /**
  * Adapter + device setup with explicit limits.
@@ -50,8 +51,8 @@ type NumericLimit =
 export function largestStorageBufferBytes(p: Params): number {
   const droplets = p.maxDroplets * DROPLET_STRIDE;
   const tracers = TRACER_POOL_CAP * TRACER_STRIDE;
-  // vel / accM fields are vec2 (8 bytes per cell) at the largest allowed grid.
-  const field = GRID_MAX_NX * GRID_MAX_NY * 8;
+  // The multigrid graph is the largest per-cell field at the maximum grid.
+  const field = GRID_MAX_NX * GRID_MAX_NY * PRESSURE_NODE_BYTES;
   return Math.max(droplets, tracers, field);
 }
 

@@ -120,15 +120,21 @@ Each timestep (simplified):
 3. Apply scattered sources to **u**, **T**, **q** from droplet coupling.
 4. Advect **u**, **T**, **q** into the other half of the ping-pong buffers.
 5. Buoyancy from virtual temperature → update the advected **u**.
-6. Pressure projection (Jacobi Poisson solve, Neumann on solid faces) → divergence-free **u**.
-7. Boundary conditions (no-through floor, open sides and top, solid walls); the advected half becomes current.
+6. Boundary conditions (no-through floor, open sides and top, solid walls).
+7. Pressure projection (three-level multigrid V-cycle); the advected half becomes current. No boundary velocity edits run after projection.
+
+The advanced **Pressure V-cycles** control replaces the old Jacobi iteration count (default: 2 cycles, range: 1–4). Each cycle uses two weighted-Jacobi pre/post smooths per level and twelve coarsest-level smooths. Levels halve both even dimensions, stopping before either would become odd. The shared 64-byte simulation uniform is unchanged; old saved links use the default cycle count.
+
+Velocities remain cell-centred. The pressure matrix is the actual collocated gradient's `GᵀG` operator, not a five-point approximation to its stride-two stencil. Restriction sums residuals within connected, same-parity fluid aggregates; prolongation injects their corrections, and coarse operators use `PᵀAP`. This preserves the centred stencil's parity subgrids and never joins fluid across a solid wall. Top ghost pressure is zero, side pressure is Neumann, and floor/wall-normal velocity components are constrained to zero.
+
+The status panel reports **Max |div u|** in s⁻¹ from the final velocity field using the same discrete divergence as projection, not the pre-solve RHS. `npm run check:pressure` checks operator/transfer consistency, wall constraints, even grids, diagnostics, and residual reduction against the previous 30-iteration five-point solve. For a hardware comparison, load **100 ft tree shake**, keep the grid/substeps and simulation time identical, and compare this value and FPS against the old revision; software rendering is not a 60-fps hardware benchmark.
 
 ### Solid obstacles
 
 Houses and tree trunks from the shared backyard layout (`src/render/sceneData.ts`) are **solid**. On every reset (and when the domain, grid or the **Obstacles** toggle changes) `src/sim/solids.ts` rasterizes them into one per-cell mask (`Fields.solid`): each house is a box plus its stepped roof triangle, each trunk a narrow column up to half the tree height. Foliage stays porous (not modeled). The stylized scene draws houses and trunks from the same snapped boxes, so a house that blocks the wind sits on exactly the cells that block it; the field overlays hatch solid cells.
 
-- **Walls**: velocity inside a solid is zero, and a fluid cell next to a solid face loses the velocity component pointing into it. The floor (`j = 0`) stays a no-through floor.
-- **Pressure**: solid cells are not Jacobi unknowns; across a solid face the neighbour takes the centre pressure (Neumann), and the divergence stencil sees a zero-velocity wall. Velocity is never projected inside a solid.
+- **Walls**: velocity inside a solid is zero, and a fluid cell next to a solid face has zero wall-normal velocity. The floor (`j = 0`) stays a no-through floor.
+- **Pressure**: solid cells are not pressure unknowns. Gradient rows normal to solid faces are disabled, and every multigrid level respects that connectivity. Velocity inside a solid stays zero.
 - **Advection**: velocity back-traces see the walls' zero velocity; **T** and **q** only blend fluid cells, so nothing is pulled out of a house.
 - **Spray**: a drop that enters a solid leaves its water the way floor contact does (vapor, a little latent cooling, splash momentum along the surface) on the fluid side, wets the face it struck (shown as a darkened wall), runs a share down to the ground at the wall's foot, and dies. Droplet and air-stream deposits only land in fluid cells, and an air stream stops at the first wall in its path.
 - **Tracers** are not seeded inside solids and slide along walls instead of stepping into them.
@@ -167,7 +173,7 @@ Semi-implicit Stokes drag with Reynolds correction. Droplets feel gravity and in
 
 ### Numerics
 
-- Stable-fluids style advection + Jacobi pressure projection
+- Stable-fluids style advection + collocated multigrid pressure projection
 - Substeps per frame for stiff droplet coupling
 - Fixed-point atomic accumulation for GPU scatter deposits
 - Default grid: 512×128 over a 32 m × 8 m domain (~62 mm cells)
@@ -231,7 +237,7 @@ The playground remains at [`/prototype.html`](public/prototype.html). Shared dra
 - Multiple emitters (water spray + pure air streams), canvas drag + numeric position controls
 - Backyard environment: grass, trees, houses, clouds, ground mist, wet ground
 - Presets, advanced solver controls, JSON export/import, URL hash sharing
-- Stable-fluids pressure projection (collocated grid + Jacobi)
+- Stable-fluids pressure projection (collocated grid + multigrid)
 - Solid houses and tree trunks: the gust goes over and around them, spray wets their walls (**Obstacles** toggle)
 
 ### Module layout (`src/`)

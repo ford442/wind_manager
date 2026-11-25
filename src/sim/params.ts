@@ -1,5 +1,6 @@
 import type { Emitter } from './emitters';
 import { defaultEmitters } from './emitters';
+import { PRESSURE_CYCLES_DEFAULT } from './pressure';
 
 export interface Params {
   nx: number;
@@ -8,7 +9,7 @@ export interface Params {
   domainH: number;
   dt: number;
   substeps: number;
-  jacobiIters: number;
+  pressureCycles: number;
 
   tAmb: number;
   rhAmb: number;
@@ -76,7 +77,7 @@ export function defaultParams(): Params {
     domainH: 8.0,
     dt: 1 / 120,
     substeps: 2,
-    jacobiIters: 30,
+    pressureCycles: PRESSURE_CYCLES_DEFAULT,
 
     tAmb: 30.0,
     rhAmb: 20,
