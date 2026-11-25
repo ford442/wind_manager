@@ -11,6 +11,9 @@ const {
   PRESSURE_SMOOTHS, PRESSURE_COARSE_SMOOTHS,
 } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 
+assert.equal(PRESSURE_SMOOTHS % 2, 0, 'pre/post smoothing must finish in p0');
+assert.equal(PRESSURE_COARSE_SMOOTHS % 2, 0, 'coarse smoothing must finish in p0');
+
 function matrix(level, p) {
   const a = new Float32Array(level.nodes);
   const n = level.nx * level.ny;

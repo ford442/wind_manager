@@ -1,6 +1,7 @@
 /** Positive-direction graph edges: x+1, y+1, x+2, y+2. */
 export const PRESSURE_NODE_BYTES = 32;
 export const PRESSURE_CYCLES_DEFAULT = 2;
+// Even counts leave each level's solution in p0 for restriction and projection.
 export const PRESSURE_SMOOTHS = 2;
 export const PRESSURE_COARSE_SMOOTHS = 12;
 
