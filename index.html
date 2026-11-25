@@ -574,8 +574,8 @@
                 <input type="range" id="adv-substeps" min="1" max="8" step="1" value="2">
               </div>
               <div class="slider">
-                <div class="row"><span>Jacobi iterations</span><span id="adv-jacobi-val"></span></div>
-                <input type="range" id="adv-jacobi" min="5" max="80" step="1" value="30">
+                <div class="row"><span>Pressure V-cycles</span><span id="adv-pressure-val"></span></div>
+                <input type="range" id="adv-pressure" min="1" max="4" step="1" value="2">
               </div>
               <div class="slider">
                 <div class="row"><span>Velocity damp</span><span id="adv-damp-val"></span></div>
@@ -615,6 +615,7 @@
             <span class="k">FPS</span><span class="v" id="fps">—</span>
             <span class="k">T range</span><span class="v" id="t-range">—</span>
             <span class="k">Max speed</span><span class="v" id="max-speed">—</span>
+            <span class="k">Max |div u|</span><span class="v" id="max-divergence">—</span>
             <span class="k">Emitted</span><span class="v" id="emitted">—</span>
             <span class="k">Health</span><span class="v" id="nan-status">—</span>
           </div>

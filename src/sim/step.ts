@@ -21,6 +21,7 @@ import {
   type EmitterDispatch,
 } from './simParamsUniform';
 import { UniformWriter } from './uniformWriter';
+import { PRESSURE_SMOOTHS, PRESSURE_COARSE_SMOOTHS } from './pressure';
 
 // Static shader imports via Vite (inlined at build/dev time)
 import commonSrc from '../shaders/common.wgsl?raw';
@@ -54,8 +55,7 @@ interface ParityBindGroups {
   buoy: GPUBindGroup;
   bound: GPUBindGroup;
   div: GPUBindGroup;
-  /** Indexed by `jacobiIters % 2`: final pressure in p0 (even) or p1 (odd). */
-  proj: [GPUBindGroup, GPUBindGroup];
+  proj: GPUBindGroup;
 }
 
 /**
@@ -80,12 +80,12 @@ interface ParityBindGroups {
  *
  * ## Bind groups
  *
- * vel/T/q ping-pong each substep and p0/p1 ping-pong inside Jacobi. Scatter,
+ * vel/T/q ping-pong each substep and p0/p1 ping-pong inside each smoother. Scatter,
  * droplets and advection read the current half (`vel0`/`T0`/`q0`); advection
  * writes the other half, and buoyancy, the pressure solve and the boundary pass
  * work on that advected half, which the swap then makes current. Every pass
  * that touches velocity or scalars also binds the solid mask. Both
- * parities (and both Jacobi endings for `project`) are built once when the
+ * parities and multigrid bindings are built once when the
  * buffer set changes (`setFields`), and the step picks one by buffer identity.
  * Nothing is allocated inside the substep loop.
  */
@@ -132,7 +132,9 @@ export async function createSim(
     buoy: pipe(modBuoy, 'buoyancy'),
     bound: pipe(modBuoy, 'boundaries'),
     div: pipe(modPressure, 'divergence'),
-    jacobi: pipe(modPressure, 'jacobi'),
+    smooth: pipe(modPressure, 'pressure_smooth'),
+    restrict: pipe(modPressure, 'restrict_residual'),
+    prolong: pipe(modPressure, 'prolongate'),
     proj: pipe(modPressure, 'project'),
   }));
 
@@ -168,8 +170,11 @@ export async function createSim(
 
   let emitBG: GPUBindGroup;
   let airBG: GPUBindGroup;
-  let jacobiA: GPUBindGroup;
-  let jacobiB: GPUBindGroup;
+  let multigrid: {
+    smooth: [GPUBindGroup, GPUBindGroup];
+    restrict?: GPUBindGroup;
+    prolong?: GPUBindGroup;
+  }[];
   /** [0]: built with the current `fields.vel0` as read side; [1]: swapped. */
   let parity: [ParityBindGroups, ParityBindGroups];
   /** Buffer that is `fields.vel0` when parity set 0 applies. */
@@ -257,7 +262,7 @@ export async function createSim(
         { binding: 4, resource: { buffer: fields.p0 } },
         { binding: 5, resource: { buffer: fields.solid } },
       ]),
-      proj: [projFor(fields.p0, 'project p0'), projFor(fields.p1, 'project p1')],
+      proj: projFor(fields.p0, 'project p0'),
     };
   }
 
@@ -282,27 +287,25 @@ export async function createSim(
         { binding: 8, resource: { buffer: fields.accM } },
       ],
     });
-    jacobiA = device.createBindGroup({
-      label: 'jacobi p0→p1',
-      layout: pipes.jacobi.getBindGroupLayout(0),
-      entries: [
-        U,
-        { binding: 2, resource: { buffer: fields.div } },
-        { binding: 3, resource: { buffer: fields.p0 } },
-        { binding: 4, resource: { buffer: fields.p1 } },
-        { binding: 5, resource: { buffer: fields.solid } },
-      ],
-    });
-    jacobiB = device.createBindGroup({
-      label: 'jacobi p1→p0',
-      layout: pipes.jacobi.getBindGroupLayout(0),
-      entries: [
-        U,
-        { binding: 2, resource: { buffer: fields.div } },
-        { binding: 3, resource: { buffer: fields.p1 } },
-        { binding: 4, resource: { buffer: fields.p0 } },
-        { binding: 5, resource: { buffer: fields.solid } },
-      ],
+    const bufferEntry = (binding: number, buffer: GPUBuffer): GPUBindGroupEntry =>
+      ({ binding, resource: { buffer } });
+    const bind = (pipeline: GPUComputePipeline, entries: GPUBindGroupEntry[]) =>
+      device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
+    multigrid = fields.pressure.map((level, i) => {
+      const base = [bufferEntry(6, level.uniform), bufferEntry(7, level.graph)];
+      const coarse = fields.pressure[i + 1];
+      return {
+        smooth: [
+          bind(pipes.smooth, [...base, bufferEntry(2, level.rhs),
+            bufferEntry(3, level.p0), bufferEntry(4, level.p1)]),
+          bind(pipes.smooth, [...base, bufferEntry(2, level.rhs),
+            bufferEntry(3, level.p1), bufferEntry(4, level.p0)]),
+        ],
+        restrict: coarse && bind(pipes.restrict, [...base, bufferEntry(2, level.rhs),
+          bufferEntry(3, level.p0), bufferEntry(9, coarse.rhs), bufferEntry(10, coarse.p0)]),
+        prolong: coarse && bind(pipes.prolong, [...base, bufferEntry(4, level.p0),
+          bufferEntry(8, coarse.p0)]),
+      };
     });
     const { vel0, vel1, T0, T1, q0, q1 } = fields;
     parity = [
@@ -333,6 +336,32 @@ export async function createSim(
 
   const wg = workgroups1d;
   const wg2d = workgroups2d;
+
+  function vCycle(pass: GPUComputePassEncoder, index: number): void {
+    const level = fields.pressure[index];
+    const bg = multigrid[index];
+    const grid = wg2d(level.nx, level.ny, 8, 8);
+    const smooth = (count: number) => {
+      pass.setPipeline(pipes.smooth);
+      for (let i = 0; i < count; i++) {
+        pass.setBindGroup(0, bg.smooth[i % 2]);
+        pass.dispatchWorkgroups(...grid);
+      }
+    };
+    if (!bg.restrict || !bg.prolong) {
+      smooth(PRESSURE_COARSE_SMOOTHS);
+      return;
+    }
+    smooth(PRESSURE_SMOOTHS);
+    pass.setPipeline(pipes.restrict);
+    pass.setBindGroup(0, bg.restrict);
+    pass.dispatchWorkgroups(...wg2d(level.nx / 2, level.ny / 2, 8, 8));
+    vCycle(pass, index + 1);
+    pass.setPipeline(pipes.prolong);
+    pass.setBindGroup(0, bg.prolong);
+    pass.dispatchWorkgroups(...grid);
+    smooth(PRESSURE_SMOOTHS);
+  }
 
   /** Per-substep dispatch plan, filled during packing. */
   interface SubstepPlan {
@@ -422,22 +451,19 @@ export async function createSim(
     pass.setBindGroup(0, bg.buoy);
     pass.dispatchWorkgroups(...grid2d);
 
+    // Apply edge/wall conditions before projection, never after it.
+    pass.setPipeline(pipes.bound);
+    pass.setBindGroup(0, bg.bound);
+    pass.dispatchWorkgroups(...grid2d);
+
     pass.setPipeline(pipes.div);
     pass.setBindGroup(0, bg.div);
     pass.dispatchWorkgroups(...grid2d);
 
-    pass.setPipeline(pipes.jacobi);
-    for (let i = 0; i < p.jacobiIters; i++) {
-      pass.setBindGroup(0, i % 2 === 0 ? jacobiA : jacobiB);
-      pass.dispatchWorkgroups(...grid2d);
-    }
+    for (let i = 0; i < p.pressureCycles; i++) vCycle(pass, 0);
 
     pass.setPipeline(pipes.proj);
-    pass.setBindGroup(0, bg.proj[p.jacobiIters % 2]);
-    pass.dispatchWorkgroups(...grid2d);
-
-    pass.setPipeline(pipes.bound);
-    pass.setBindGroup(0, bg.bound);
+    pass.setBindGroup(0, bg.proj);
     pass.dispatchWorkgroups(...grid2d);
 
     pass.end();

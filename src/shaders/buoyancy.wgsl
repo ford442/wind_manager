@@ -31,7 +31,7 @@ fn buoyancy(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 // Domain edges (open sides, open top, floor) and solid walls. Runs last in the
-// substep. Edge cells copy from the next row in; solid cells copy T/q from
+// substep before pressure projection. Edge cells copy from the next row in; solid cells copy T/q from
 // their fluid neighbours. sim/solids.ts keeps every solid at least two cells
 // from the side and top edges, so no cell reads a neighbour that another
 // thread in this dispatch rewrites (interior wall-side cells change only

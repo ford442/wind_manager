@@ -1,5 +1,16 @@
 import { cellSize, qAmb, type Params } from './params';
 import { N_SOLIDS, N_SOLID_FACES, rasterizeSolids, type SolidLayout } from './solids';
+import { pressureHierarchy } from './pressure';
+
+export interface PressureLevel {
+  nx: number;
+  ny: number;
+  p0: GPUBuffer;
+  p1: GPUBuffer;
+  rhs: GPUBuffer;
+  graph: GPUBuffer;
+  uniform: GPUBuffer;
+}
 
 /** Wetness slots after the `nx` ground columns: one per solid face. */
 export const SOLID_WET_SLOTS = N_SOLIDS * N_SOLID_FACES;
@@ -15,6 +26,7 @@ export interface Fields {
   p0: GPUBuffer;
   p1: GPUBuffer;
   div: GPUBuffer;
+  pressure: PressureLevel[];
   /** Scatter accumulator for humidity and temperature, interleaved `[q, T]` per cell. */
   accQT: GPUBuffer;
   accM: GPUBuffer;
@@ -47,6 +59,20 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const mk = (size: number) => device.createBuffer({ size, usage });
   const wetLen = p.nx + SOLID_WET_SLOTS;
+  const solids = rasterizeSolids(p);
+  const pressure = pressureHierarchy(p.nx, p.ny, solids.mask).map((level): PressureLevel => {
+    const count = level.nx * level.ny;
+    const graph = mk(level.nodes.byteLength);
+    const uniform = device.createBuffer({
+      size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(graph, 0, level.nodes);
+    device.queue.writeBuffer(uniform, 0, new Uint32Array([level.nx, level.ny, 0, 0]));
+    return {
+      nx: level.nx, ny: level.ny,
+      p0: mk(count * 4), p1: mk(count * 4), rhs: mk(count * 4), graph, uniform,
+    };
+  });
 
   const fields: Fields = {
     n,
@@ -56,16 +82,17 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     T1: mk(n * 4),
     q0: mk(n * 4),
     q1: mk(n * 4),
-    p0: mk(n * 4),
-    p1: mk(n * 4),
-    div: mk(n * 4),
+    p0: pressure[0].p0,
+    p1: pressure[0].p1,
+    div: pressure[0].rhs,
+    pressure,
     accQT: mk(n * 8),
     accM: mk(n * 8),
     wet: mk(wetLen * 4),
     accWet: mk(wetLen * 4),
     qDep: mk(p.nx * 4),
     solid: mk(n * 4),
-    solids: rasterizeSolids(p),
+    solids,
     h: cellSize(p),
     reset,
     writeSolids,
@@ -78,6 +105,9 @@ export function createFields(device: GPUDevice, p: Params): Fields {
     }
     fields.solids = rasterizeSolids(params);
     queue.writeBuffer(fields.solid, 0, fields.solids.mask);
+    pressureHierarchy(params.nx, params.ny, fields.solids.mask).forEach((level, i) => {
+      queue.writeBuffer(fields.pressure[i].graph, 0, level.nodes);
+    });
   }
 
   function reset(queue: GPUQueue, params: Params): void {
@@ -107,10 +137,13 @@ export function createFields(device: GPUDevice, p: Params): Fields {
   function destroy(): void {
     const f = fields;
     for (const b of [
-      f.vel0, f.vel1, f.T0, f.T1, f.q0, f.q1, f.p0, f.p1, f.div,
+      f.vel0, f.vel1, f.T0, f.T1, f.q0, f.q1,
       f.accQT, f.accM, f.wet, f.accWet, f.qDep, f.solid,
     ]) {
       b.destroy();
+    }
+    for (const level of f.pressure) {
+      for (const b of [level.p0, level.p1, level.rhs, level.graph, level.uniform]) b.destroy();
     }
   }
 

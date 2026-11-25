@@ -38,7 +38,7 @@ const MODULES = [
   { name: 'apply_scatter', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['apply', 'apply_wet'] },
   { name: 'advect', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['advect'] },
   { name: 'buoyancy', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['buoyancy', 'boundaries'] },
-  { name: 'pressure', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['divergence', 'jacobi', 'project'] },
+  { name: 'pressure', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['divergence', 'pressure_smooth', 'restrict_residual', 'prolongate', 'project'] },
   { name: 'tracers', consumer: 'src/sim/tracers.ts', generated: false, entryPoints: ['seed_tracers', 'update_tracers'] },
   {
     name: 'environment',

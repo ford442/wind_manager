@@ -33,10 +33,10 @@ const SLIDERS: SliderSpec[] = [
     fmt: (v) => `${v}`,
   },
   {
-    id: 'adv-jacobi',
-    key: 'jacobiIters',
-    min: 5,
-    max: 80,
+    id: 'adv-pressure',
+    key: 'pressureCycles',
+    min: 1,
+    max: 4,
     step: 1,
     fmt: (v) => `${v}`,
   },
@@ -138,7 +138,7 @@ export function setupAdvanced(
     el.addEventListener('input', () => {
       const raw = parseFloat(el.value);
       const value =
-        spec.key === 'substeps' || spec.key === 'jacobiIters' || spec.key === 'nx' || spec.key === 'ny'
+        spec.key === 'substeps' || spec.key === 'pressureCycles' || spec.key === 'nx' || spec.key === 'ny'
           ? Math.round(raw)
           : raw;
       setAdvancedParam(params, spec.key, value);
@@ -171,7 +171,7 @@ export function setupAdvanced(
       showMessages(
         previewAdvancedWarnings(params),
         [],
-        `⛔ ${message} Simulation paused — try smaller dt, more substeps, or higher Jacobi iterations.`,
+        `⛔ ${message} Simulation paused — try smaller dt, more substeps, or more pressure cycles.`,
       );
     },
   };

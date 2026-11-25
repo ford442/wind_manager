@@ -1,10 +1,11 @@
 import { clampEmitterPosition } from './emitters';
 import { cellSize, type Params } from './params';
+import { PRESSURE_CYCLES_DEFAULT } from './pressure';
 
 export const ADVANCED_DEFAULTS = {
   dt: 1 / 120,
   substeps: 2,
-  jacobiIters: 30,
+  pressureCycles: PRESSURE_CYCLES_DEFAULT,
   damp: 0.02,
   relax: 1 / 120,
   domainW: 32.0,
@@ -63,11 +64,10 @@ export function sanitizeAdvancedParams(
 
   p.substeps = Math.max(1, Math.min(8, Math.round(p.substeps)));
 
-  if (p.jacobiIters < 8) {
-    p.jacobiIters = 8;
-    adjusted.push('Jacobi iterations raised to 8');
-  }
-  p.jacobiIters = Math.min(80, Math.round(p.jacobiIters));
+  const cycles = p.pressureCycles;
+  p.pressureCycles = Number.isFinite(cycles) ? Math.max(1, Math.min(4, Math.round(cycles))) :
+    PRESSURE_CYCLES_DEFAULT;
+  if (cycles !== p.pressureCycles) adjusted.push(`Pressure cycles set to ${p.pressureCycles}`);
 
   if (p.damp > 0.12) {
     p.damp = 0.12;
@@ -95,8 +95,8 @@ export function sanitizeAdvancedParams(
     }
   }
 
-  if (p.jacobiIters < 18) {
-    warnings.push('Low Jacobi count — divergence may linger (try ≥ 20)');
+  if (p.pressureCycles < 2) {
+    warnings.push('One pressure cycle — divergence may linger (try 2)');
   }
   if (p.damp > 0.06) {
     warnings.push('High damping — flow may feel sluggish');

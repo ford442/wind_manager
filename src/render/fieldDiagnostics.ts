@@ -1,6 +1,7 @@
 import type { Droplets } from '../sim/droplets';
 import type { Fields } from '../sim/fields';
 import { createReadbackBuffer } from './webgpu';
+import { projectedDivergence } from '../sim/pressure';
 
 /**
  * Periodic CPU readback of field buffers for the stats panel (temperature range,
@@ -23,6 +24,7 @@ export interface FieldDiagnosticsResult {
   minTemperature: number;
   maxTemperature: number;
   maxSpeedSquared: number;
+  maxDivergence: number;
   emitted: number;
   hasNaN: boolean;
 }
@@ -77,7 +79,7 @@ function scanMappedFields(
 
   for (let i = 0; i < diagN; i++) {
     const ti = t[i];
-    if (Number.isNaN(ti)) {
+    if (!Number.isFinite(ti)) {
       hasNaN = true;
       break;
     }
@@ -85,7 +87,7 @@ function scanMappedFields(
     if (ti > maxTemperature) maxTemperature = ti;
     const vx = v[2 * i];
     const vy = v[2 * i + 1];
-    if (Number.isNaN(vx) || Number.isNaN(vy)) {
+    if (!Number.isFinite(vx) || !Number.isFinite(vy)) {
       hasNaN = true;
       break;
     }
@@ -107,6 +109,7 @@ export async function sampleFieldDiagnostics(
   drops: Droplets,
 ): Promise<FieldDiagnosticsResult> {
   const diagN = buffers.cellCount;
+  const { nx, ny, mask, h } = fields.solids;
   const encoder: GPUCommandEncoder = device.createCommandEncoder();
   encoder.copyBufferToBuffer(fields.T0, 0, buffers.temperature, 0, diagN * 4);
   encoder.copyBufferToBuffer(fields.vel0, 0, buffers.velocity, 0, diagN * 8);
@@ -125,7 +128,8 @@ export async function sampleFieldDiagnostics(
     const counterView = new Uint32Array(buffers.dropletCounter.getMappedRange());
     const emitted = counterView[0] ?? 0;
     const scan = scanMappedFields(diagN, temperatureView, velocityView);
-    return { ...scan, emitted };
+    const maxDivergence = projectedDivergence(velocityView, mask, nx, ny, h);
+    return { ...scan, emitted, maxDivergence };
   } finally {
     buffers.temperature.unmap();
     buffers.velocity.unmap();

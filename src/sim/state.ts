@@ -31,7 +31,7 @@ export interface SavedState {
   domainH: number;
   dt: number;
   substeps: number;
-  jacobiIters: number;
+  pressureCycles: number;
   tAmb: number;
   rhAmb: number;
   latentOn: boolean;
@@ -101,7 +101,7 @@ export function serializeState(p: Params): SavedState {
     domainH: p.domainH,
     dt: p.dt,
     substeps: p.substeps,
-    jacobiIters: p.jacobiIters,
+    pressureCycles: p.pressureCycles,
     tAmb: p.tAmb,
     rhAmb: p.rhAmb,
     latentOn: p.latentOn,
@@ -176,7 +176,8 @@ export function parseSavedState(raw: unknown): { state: SavedState } | { error: 
     domainH: num(o.domainH, defs.domainH),
     dt: num(o.dt, defs.dt),
     substeps: num(o.substeps, defs.substeps),
-    jacobiIters: num(o.jacobiIters, defs.jacobiIters),
+    // Older v1 links only have jacobiIters; use the safe multigrid default.
+    pressureCycles: num(o.pressureCycles, defs.pressureCycles),
     tAmb: num(o.tAmb, defs.tAmb),
     rhAmb: num(o.rhAmb, defs.rhAmb),
     latentOn: bool(o.latentOn, defs.latentOn),
@@ -217,7 +218,7 @@ export function applySavedState(target: Params, saved: SavedState): ApplyStateRe
   target.domainH = saved.domainH;
   target.dt = saved.dt;
   target.substeps = saved.substeps;
-  target.jacobiIters = saved.jacobiIters;
+  target.pressureCycles = saved.pressureCycles;
   target.tAmb = saved.tAmb;
   target.rhAmb = saved.rhAmb;
   target.latentOn = saved.latentOn;
