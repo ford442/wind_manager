@@ -87,7 +87,7 @@ interface ParityBindGroups {
  * that touches velocity or scalars also binds the solid mask. Both
  * parities and multigrid bindings are built once when the
  * buffer set changes (`setFields`), and the step picks one by buffer identity.
- * Nothing is allocated inside the substep loop.
+ * No GPU resources are allocated inside the substep loop.
  */
 export async function createSim(
   device: GPUDevice,

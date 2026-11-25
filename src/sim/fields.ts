@@ -100,7 +100,7 @@ export function createFields(device: GPUDevice, p: Params): Fields {
   };
 
   function writeSolids(queue: GPUQueue, params: Params): void {
-    if (params.nx * params.ny !== n) {
+    if (params.nx !== pressure[0].nx || params.ny !== pressure[0].ny) {
       throw new Error('writeSolids: grid size changed; rebuild Fields first');
     }
     fields.solids = rasterizeSolids(params);
