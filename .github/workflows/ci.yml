@@ -23,6 +23,8 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=high || true
       - run: npm run verify
+      # Yard-volume pressure operator, Galerkin levels and V-cycle settings (CPU only).
+      - run: npm run check:volume-pressure
 
       # Validate every concatenated shader module (common.wgsl + <shader>.wgsl,
       # plus the generated MAX_EMITTERS prelude) with Naga. No GPU needed.

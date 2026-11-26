@@ -37,7 +37,7 @@ export class GpuLimitError extends Error {
   }
 }
 
-type NumericLimit =
+export type NumericLimit =
   | 'maxStorageBuffersPerShaderStage'
   | 'maxStorageBufferBindingSize'
   | 'maxBufferSize'
@@ -78,6 +78,19 @@ export function requiredLimits(p: Params): Record<NumericLimit, number> {
 }
 
 export async function requestGpuDevice(p: Params): Promise<GpuContext> {
+  return requestGpuDeviceWithLimits(requiredLimits(p));
+}
+
+/**
+ * Request an adapter and a device with exactly `want`, failing with
+ * {@link GpuLimitError} on the first limit the adapter cannot meet. `check`
+ * runs against the adapter's limits before the device is created (the yard
+ * volume checks every buffer it will allocate there).
+ */
+export async function requestGpuDeviceWithLimits(
+  want: Partial<Record<NumericLimit, number>>,
+  check?: (adapterLimits: GPUSupportedLimits) => void,
+): Promise<GpuContext> {
   if (!navigator.gpu) {
     throw new Error(
       'This browser does not expose WebGPU (navigator.gpu is missing). ' +
@@ -88,8 +101,8 @@ export async function requestGpuDevice(p: Params): Promise<GpuContext> {
   if (!adapter) {
     throw new Error('No WebGPU adapter available on this machine.');
   }
+  check?.(adapter.limits);
 
-  const want = requiredLimits(p);
   const limits: Record<string, number> = {};
   for (const [name, required] of Object.entries(want) as [NumericLimit, number][]) {
     const available = adapter.limits[name];

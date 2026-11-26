@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>wind_manager — yard volume (first 3D solver)</title>
+  <style>
+    :root {
+      --bg: #0a0f14; --panel: #101823; --border: #223042;
+      --text: #dbe4ee; --muted: #7c8ea3; --accent: #38bdf8; --good: #34d399; --bad: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    .wrap { max-width: 1600px; margin: 0 auto; }
+    .app-nav {
+      display: flex; gap: 4px; margin-bottom: 12px; padding: 4px; flex-wrap: wrap;
+      background: #0d1520; border: 1px solid var(--border); border-radius: 10px; width: fit-content; max-width: 100%;
+    }
+    .app-nav a {
+      padding: 9px 16px; border-radius: 7px; font-size: 13px; font-weight: 600;
+      text-decoration: none; color: var(--muted); line-height: 1.25;
+    }
+    .app-nav a small { display: block; font-size: 10px; font-weight: 400; opacity: 0.85; margin-top: 2px; }
+    .app-nav a:hover { color: var(--text); background: #17222f; }
+    .app-nav a.active { color: #06202e; background: var(--accent); }
+    .app-nav a.active small { color: #0c3d52; }
+    header h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+    header p { margin: 4px 0 12px; color: var(--muted); font-size: 13px; max-width: 60em; line-height: 1.5; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+    .canvas-wrap {
+      position: relative; width: 100%; aspect-ratio: 16 / 9; background: #05080c;
+      border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    }
+    canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+    .hud {
+      position: absolute; left: 8px; top: 8px; font: 11px/1.5 ui-monospace, monospace; color: #cbd5e1;
+      background: rgba(5, 8, 12, 0.7); padding: 6px 8px; border-radius: 6px; pointer-events: none; max-width: 60%;
+    }
+    .hud .bad { color: var(--bad); }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+    .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
+    label.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin: 5px 0; }
+    label.row input[type=range] { width: 150px; }
+    label.row input[type=number] { width: 80px; background: #0a1218; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; }
+    select, button {
+      background: #0a1218; color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 8px; font-size: 12px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .val { font: 11px ui-monospace, monospace; color: var(--muted); min-width: 44px; text-align: right; }
+    table { width: 100%; border-collapse: collapse; font: 11px ui-monospace, monospace; }
+    td { padding: 2px 4px; border-bottom: 1px solid #172230; }
+    td.num { text-align: right; }
+    td.bad { color: var(--bad); }
+    #gpu-error { display: none; padding: 12px; border: 1px solid var(--bad); border-radius: 8px; margin-bottom: 12px; color: #fecaca; }
+    details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="app-nav" aria-label="Apps">
+      <a href="./">Physics sim<small>32 m × 8 m slice, latent-heat proof</small></a>
+      <a href="volume.html" class="active" aria-current="page">Yard volume<small>first 3D solve, camera in the yard</small></a>
+      <a href="prototype.html">Art playground<small>legacy canvas</small></a>
+    </nav>
+    <header>
+      <h1>Yard volume</h1>
+      <p>The same coupled air ⇄ droplet ⇄ temperature solver, with the extra <code>k</code> index: a hose sprays
+        up, evaporation cools the air, the cold column sinks and spreads outward in <em>every</em> direction along
+        the ground. Blue haze is the temperature field ray-marched through the volume; the strip below is the side
+        view at the hose's z, drawn like the slice app.</p>
+    </header>
+    <div id="gpu-error"><strong>WebGPU unavailable.</strong> <span class="msg"></span></div>
+    <div class="layout">
+      <div>
+        <div class="canvas-wrap">
+          <canvas id="c"></canvas>
+          <div class="hud" id="hud">starting…</div>
+        </div>
+        <div class="hint">Drag to orbit (walk mode: look) · right-drag or shift-drag to pan · wheel to zoom ·
+          W A S D to walk · double-click the ground to move the selected source there.</div>
+      </div>
+      <aside>
+        <div class="panel">
+          <h2>Experiment</h2>
+          <label class="row">Preset <select id="preset"></select></label>
+          <div class="btns">
+            <button id="load-preset">Load</button>
+            <button id="reset">Reset</button>
+            <button id="pause">Pause</button>
+          </div>
+          <label class="row">Latent heat <input type="checkbox" id="latent" checked></label>
+          <label class="row">Solid houses / trunks <input type="checkbox" id="solids" checked></label>
+          <label class="row">Ambient T <input type="range" id="tamb" min="10" max="42" step="0.5"><span class="val" id="tamb-v"></span></label>
+          <label class="row">Ambient RH <input type="range" id="rh" min="5" max="90" step="1"><span class="val" id="rh-v"></span></label>
+          <label class="row">Grid <select id="grid"></select></label>
+        </div>
+        <div class="panel">
+          <h2>View</h2>
+          <label class="row">Layout <select id="view-mode">
+            <option value="split">Yard + side view</option>
+            <option value="yard">Yard only</option>
+            <option value="side">Side view only</option>
+          </select></label>
+          <label class="row">Camera <select id="camera-mode">
+            <option value="orbit">Orbit</option>
+            <option value="walk">Walk (eye height)</option>
+          </select></label>
+          <label class="row">Temperature volume <input type="checkbox" id="show-volume" checked></label>
+          <label class="row">Volume contrast (K) <input type="range" id="contrast" min="0.5" max="8" step="0.25"><span class="val" id="contrast-v"></span></label>
+          <label class="row">Droplets <input type="checkbox" id="show-drops" checked></label>
+          <label class="row">Grass <input type="checkbox" id="show-grass" checked></label>
+          <label class="row">Side slice z (m) <input type="range" id="side-z" min="0" max="16" step="0.25"><span class="val" id="side-z-v"></span></label>
+          <label class="row">Side field <select id="side-field">
+            <option value="temp">Temperature</option>
+            <option value="speed">Speed</option>
+          </select></label>
+        </div>
+        <div class="panel">
+          <h2>Sources</h2>
+          <label class="row">Selected <select id="emitter-select"></select></label>
+          <div class="btns">
+            <button id="add-water">+ Hose</button>
+            <button id="add-air">+ Fan</button>
+            <button id="remove-emitter">Remove</button>
+          </div>
+          <div id="emitter-fields"></div>
+        </div>
+        <div class="panel">
+          <details>
+            <summary>GPU buffers for this grid</summary>
+            <div id="buffer-table"></div>
+          </details>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script type="module" src="/src/volume/main.ts"></script>
+</body>
+</html>

@@ -40,6 +40,8 @@ npm run dev
 | `npm run verify` | Lint + `tsc --noEmit` + production build (pre-push / CI) |
 | `npm run check:wgsl` | Validate every concatenated shader module with Naga (needs `naga`, see below) |
 | `npm run check:ref` | Build and run the C++ scalar reference; check it still matches the shaders (needs `cmake` + a C++17 compiler) |
+| `npm run check:volume-pressure` | CPU checks of the yard volume's pressure operator, multigrid levels and V-cycle convergence |
+| `npm run check:volume` | Headless acceptance run of the yard volume in Chromium + WebGPU (needs Playwright; see [Yard volume](#yard-volume-volumehtml)) |
 
 ### Verification
 
@@ -51,11 +53,11 @@ npm run verify
 
 This runs ESLint (`eslint.config.js`), TypeScript strict checking (`tsconfig.json` with `"strict": true`), and the Vite production build.
 
-`verify` never executes a shader or checks a physics constant, so CI also runs two checks that need no GPU. The GitHub Actions workflow (`.github/workflows/ci.yml`) runs `verify` and `check:wgsl` in its `verify` job and `check:ref` in its `ref` job, on push and pull requests. Run all three before opening a PR that touches `src/shaders/`, `src/sim/params.ts`, or `ref/`.
+`verify` never executes a shader or checks a physics constant, so CI also runs two checks that need no GPU. The GitHub Actions workflow (`.github/workflows/ci.yml`) runs `verify`, `check:volume-pressure` and `check:wgsl` in its `verify` job and `check:ref` in its `ref` job, on push and pull requests. Run all three before opening a PR that touches `src/shaders/`, `src/sim/params.ts`, or `ref/`.
 
 #### Shader validation (`npm run check:wgsl`)
 
-`createSim`, the tracer module and the renderer never compile a `.wgsl` file on its own: each one joins `[generated MAX_EMITTERS prelude] + common.wgsl + <shader>.wgsl`. `scripts/validate-wgsl.mjs` rebuilds exactly that text for all seven modules and runs [Naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) on each, mapping errors back to `file:line`. It also fails if a `.wgsl` file is missing from its module table, if the TypeScript that builds a module disagrees with the table, or if a pipeline's `entryPoint` name no longer exists in WGSL.
+`createSim`, the tracer module and the renderer never compile a `.wgsl` file on its own: each one joins `[generated MAX_EMITTERS prelude] + common.wgsl + <shader>.wgsl` (the yard volume's `vol_*.wgsl` modules also add `vol_common.wgsl`, see `src/volume/shaderParts.ts`). `scripts/validate-wgsl.mjs` rebuilds exactly that text for all fourteen modules and runs [Naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) on each, mapping errors back to `file:line`. It also fails if a `.wgsl` file is missing from its module table, if the TypeScript that builds a module disagrees with the table, or if a pipeline's `entryPoint` name no longer exists in WGSL.
 
 ```bash
 cargo install naga-cli --version 30.0.2 --locked   # once; or set NAGA=/path/to/naga
@@ -187,6 +189,64 @@ Semi-implicit Stokes drag with Reynolds correction. Droplets feel gravity and in
 
 ---
 
+## Yard volume (`volume.html`)
+
+The slice above is 32 m × 8 m: its "radial" outflow is a left-right density current and the houses are a backdrop. `volume.html` is the first step toward standing in the yard: **the same solver with the extra `k` index**, a camera, and the same hose. It is a first volume, not a final renderer.
+
+- **Solver** (`src/volume/`, `src/shaders/vol_*.wgsl`): the slice's steps in the slice's order: emit, droplet update, scatter, advect, buoyancy, boundaries, multigrid projection. All of it runs on the GPU in one command buffer per frame, with per-emitter uploads recorded in the encoder exactly as in `src/sim/step.ts`. Emitters are disks in the x–z plane spraying a cone (tilt + azimuth + half-angle), not infinite lines.
+- **Solids**: houses are boxes with gable roofs, trunks are square columns, rasterized from the shared `LAYOUT` (now with `zFrac` / `dFrac`) by `src/volume/solids.ts`. The renderer draws those same boxes, so the houses in the yard are the houses in the grid.
+- **Scene** (`vol_scene.wgsl`): orbit or walk at eye height (1.7 m), one canvas. Temperature is ray-marched through T (stopping at scene depth). Grass blades on the ground sheet bend with the bottom layer of velocity. The hero tree sits at the shared layout coordinate with a z, and sways from the wind loading on its trunk and crown. Nothing is copied back to the CPU per frame; a probe reads fields back about once a second for the HUD.
+- **Side view**: the strip under the yard is the z slice through the hose, drawn with the slice app's temperature (or speed) ramp and hatched solids, so the latent-heat on/off comparison still has its picture.
+
+### Grid budget and buffer sizes
+
+The budget is about 10⁵ cells over 32 m × 8 m × 16 m (x along the yard, y up, z across). Taken literally, the suggested 256 × 48 × 8 gives 125 mm × 167 mm × **2 m** cells: eight cells for the whole 16 m depth, which cannot carry a front in +z. The default keeps the cell count and uses cubes. The literal slab is still offered, and every kernel takes per-axis spacing.
+
+| Grid | Cells | Spacing | All buffers | Largest storage buffer |
+|---|---:|---|---:|---|
+| **96 × 24 × 48** (default) | 110,592 | ⅓ m cubes | 27.7 MiB | droplets 6.10 MiB |
+| 128 × 32 × 64 | 262,144 | ¼ m cubes | 48.8 MiB | pressure graph 8.00 MiB |
+| 256 × 48 × 8 | 98,304 | 125 × 167 × 2000 mm | 25.9 MiB | droplets 6.10 MiB |
+
+`volumeBufferTable` (`src/volume/grid.ts`) lists the byte size of every buffer for a grid. `main.ts` checks it against the adapter's `maxStorageBufferBindingSize` and `maxBufferSize` **before** creating the device or any buffer, requests exactly the limits it uses (8 storage buffers per stage, as the slice), and re-checks it on every grid change. The panel shows the table under *GPU buffers*. Per cell: velocity 16 B (`vec4f`), T, q, solid 4 B each, scatter accumulators 8 + 12 B, pressure graph 32 B. The droplet cap stays at 200,000 (32 B each).
+
+### Where the volume differs from the slice, and why
+
+Each item below was found by running the volume. The slice is unchanged.
+
+| | Slice | Volume | Why |
+|---|---|---|---|
+| Projection | Exact GᵀG for the centred collocated gradient | Approximate projection: compact 7-point face Laplacian, cell velocities corrected by averaged face gradients | GᵀG splits the grid into independent parity subgrids (8 in 3D), each conserving its own mass. In 3D the ground outflow in row 0 came back through rows 2, 4, 6. |
+| Multigrid | 3 levels, parity-preserving aggregates, ω = ⅔, 2 + 2 sweeps | Up to 4 levels of 2 × 2 × 2 aggregates (Galerkin), ω = 6/7, 4 + 4 sweeps, 1.8× coarse correction, p warm-started across substeps | Aggregation is stable but slow on the 7-point stencil. These settings reach ~0.2 residual after one substep and < 0.01 after three on the default grid (`check:volume-pressure`). |
+| Buoyancy | Cell's own T_v | T_v weighted ¼ ½ ¼ in y | With the centred gradient, p(j−1) − p(j+1) integrates the buoyancy over [y(j−1), y(j+1)]. Unweighted, the floor row's cold air never reaches the pressure. |
+| Ground / wall impact | Whole drop to vapor + 12 % of its latent heat, splash `0.22 v` per drop | Impact only wets the ground (splash scaled by drop mass / cell air mass); wet ground evaporates at 5 mm/s × wetness × saturation deficit | A volume hose lands thousands of drops per second on a few cells: the slice's rule cooled the ground 24 K (below wet-bulb) and the unscaled splash fed a 40 m/s ground jet. |
+| Water flow | Drops per second per metre of depth | Parcels: each computational drop carries `dropsPerParcel` real drops | A point source spreads its outflow over a circle; it needs ~220 g/s (13 L/min, a hose on full) for a gust the slice gets from a line source. Parcels give that flow inside the same 200,000-drop cap. |
+
+### Checking it
+
+```bash
+npm run check:volume-pressure      # CPU: operator = −D_f G_f, Galerkin levels, V-cycle settings (runs in CI)
+npm run check:volume -- --shots shots   # headless Chromium + WebGPU acceptance run (local)
+```
+
+`check:volume` starts a Vite server, opens `volume.html?harness` (offscreen rendering, no frame loop, `window.__wmVolume` API), runs each experiment for 20 s of sim time, and probes the GPU fields every 2 s. On a machine without a GPU it uses SwiftShader (`--use-webgpu-adapter=swiftshader`). Set `PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs` if Playwright is installed globally. `--dt 0.0167` doubles the substep for a faster software run.
+
+Last run (SwiftShader, default grid, `--dt 0.0167`, 20 s per experiment): **17 / 17 checks pass.**
+
+| Done when | Measured |
+|---|---|
+| Vertical hose: outflow moves in +x and +z along the ground | Ground front (outward speed > 0.15 m/s) reaches 7.0 m in +x, 6.0 m in +z, 6.3 m in −x, 6.7 m in −z by t = 20 s; 0.4 m/s at 2 m; ground 15 K below ambient (wet-bulb) |
+| …and the hero tree responds when that front arrives | Gust at the tree's base 0.21 m/s at t = 12 s (4.2 m from the hose). Outward crown sway ≤ 0.31 cm while its base is calm, 2.72 cm after the front arrives |
+| Latent heat OFF does not produce that front | Same spray: no front in any direction, no cooling, and the tree is drawn 1.1 cm *toward* the hose (entrainment) instead of pushed away |
+| A house footprint stops velocity in 3D as in 2D | Hose aimed at the left house: |u| = 0 in all 153 solid cells and 0 into every solid face, as the slice's mask enforces; cold air piles against the wall in the side view |
+| Interactive at the budget, multigrid on, scene on | **Not verified on real hardware.** SwiftShader (CPU) takes ~0.54 s per frame, which says nothing about a GPU. The HUD shows GPU solver and scene time from timestamp queries where the adapter has them: that is the number to check. |
+
+| Latent heat ON | Latent heat OFF |
+|---|---|
+| ![Yard volume, latent heat on](public/gallery/volume-latent-on.png) | ![Yard volume, latent heat off](public/gallery/volume-latent-off.png) |
+
+Known limits of this first volume: the outflow is about one cell deep (⅓ m) at the tree, so it loads the trunk and lower branches, not the crown (the crown sway has a visual gain, as the slice's tree does). The ray march samples T 72 times per pixel at full resolution, the likeliest cost on integrated GPUs. Wall wetness and the slice's tracers are not ported yet.
+
 ## Configuration gallery
 
 Schematic previews below — load the matching preset in-app for the full interactive sim. Replace these SVGs with screenshots or GIFs from your own runs via **Share → Copy link** or **Export JSON**.
@@ -248,10 +308,13 @@ src/
   sim/          params, fields, solids, droplets, tracers, step, simParamsUniform, presets, state
   render/       overlays, webgpu, fieldDiagnostics, grass, trees, sceneData
   ui/           controls, dom, emitters, presets, share, help
-  shaders/      WGSL (?raw imports); wgsl.ts brands sources
-scripts/       CI checks: validate-wgsl.mjs (Naga), check-ref-parity.mjs
+  shaders/      WGSL (?raw imports); wgsl.ts brands sources; vol_*.wgsl = yard volume
+  volume/       yard volume (volume.html): grid + buffer table, params/presets, solids,
+                pressure hierarchy, fields, step, scene, camera, probe, main
+scripts/       CI checks: validate-wgsl.mjs (Naga), check-ref-parity.mjs, check-volume-pressure.mjs;
+               volume-acceptance.mjs (headless WebGPU run)
 ref/           C++ scalar reference + golden-value test (CMake)
-index.html      app shell
+index.html      app shell (slice); volume.html = yard volume
 eslint.config.js  ESLint flat config (TypeScript + browser globals)
 public/         prototype.html (legacy), gallery/ (preset schematics)
 ```

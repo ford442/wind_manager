@@ -11,6 +11,8 @@
     "verify": "npm run lint && npx tsc --noEmit && npm run build",
     "check:wgsl": "node scripts/validate-wgsl.mjs",
     "check:pressure": "node scripts/check-pressure.mjs",
+    "check:volume-pressure": "node scripts/check-volume-pressure.mjs",
+    "check:volume": "node scripts/volume-acceptance.mjs",
     "check:ref": "node scripts/check-ref-parity.mjs && cmake -S ref -B build/ref && cmake --build build/ref && ctest --test-dir build/ref --output-on-failure"
   },
   "devDependencies": {
