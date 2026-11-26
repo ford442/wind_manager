@@ -124,7 +124,7 @@ function envFlags(p: Params): number {
   return f;
 }
 
-function packSceneLayout(): Float32Array {
+function packSceneLayout(): Float32Array<ArrayBuffer> {
   if (
     LAYOUT.trees.length !== N_TREES ||
     LAYOUT.houses.length !== N_HOUSES ||

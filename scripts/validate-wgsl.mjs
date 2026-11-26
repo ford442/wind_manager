@@ -33,6 +33,7 @@ const COMMON = 'common.wgsl';
  * - `entryPoints`: the names pipelines are created with. Naga happily validates
  *   a module with no entry points, so a dropped `@compute` would otherwise pass.
  */
+const VOL = 'src/volume/shaderParts.ts';
 const MODULES = [
   { name: 'droplets', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['emit', 'update', 'air_inject'] },
   { name: 'apply_scatter', consumer: 'src/sim/step.ts', generated: true, entryPoints: ['apply', 'apply_wet'] },
@@ -47,6 +48,23 @@ const MODULES = [
     entryPoints: [
       'env_update', 'vs_env_backdrop', 'fs_env_backdrop', 'vs_env_shapes', 'fs_env_shapes',
       'vs_env_strokes', 'fs_env_strokes',
+    ],
+  },
+  // Yard volume (volume.html). Assembled by src/volume/shaderParts.ts as
+  // generated + common.wgsl + vol_common.wgsl + <shader>.wgsl.
+  { name: 'vol_droplets', consumer: 'src/volume/step.ts', composer: VOL, generated: true, extra: ['vol_common.wgsl'], entryPoints: ['vol_emit', 'vol_update', 'vol_air_inject'] },
+  { name: 'vol_scatter', consumer: 'src/volume/step.ts', composer: VOL, generated: true, extra: ['vol_common.wgsl'], entryPoints: ['vol_apply', 'vol_apply_wet'] },
+  { name: 'vol_advect', consumer: 'src/volume/step.ts', composer: VOL, generated: true, extra: ['vol_common.wgsl'], entryPoints: ['vol_advect'] },
+  { name: 'vol_buoyancy', consumer: 'src/volume/step.ts', composer: VOL, generated: true, extra: ['vol_common.wgsl'], entryPoints: ['vol_buoyancy', 'vol_boundaries'] },
+  {
+    name: 'vol_pressure', consumer: 'src/volume/step.ts', composer: VOL, generated: true, extra: ['vol_common.wgsl'],
+    entryPoints: ['vol_divergence', 'vol_pressure_smooth', 'vol_restrict_residual', 'vol_prolongate', 'vol_project'],
+  },
+  {
+    name: 'vol_scene', consumer: 'src/volume/scene.ts', composer: VOL, generated: true, extra: ['vol_common.wgsl'],
+    entryPoints: [
+      'scene_update', 'vs_full', 'fs_sky', 'vs_ground', 'fs_ground', 'vs_grass', 'fs_grass', 'vs_boxes', 'fs_boxes',
+      'vs_blobs', 'fs_blobs', 'vs_drops', 'fs_drops', 'fs_volume', 'fs_side',
     ],
   },
   {
@@ -79,20 +97,24 @@ const generatedPrelude = (n) => `const MAX_EMITTERS : u32 = ${n}u;`;
 
 function checkManifest() {
   const onDisk = readdirSync(SHADER_DIR).filter((f) => f.endsWith('.wgsl')).sort();
-  const listed = [COMMON, ...MODULES.map((m) => `${m.name}.wgsl`)].sort();
+  const listed = [...new Set([COMMON, ...MODULES.flatMap((m) => [...(m.extra ?? []), `${m.name}.wgsl`])])].sort();
   for (const f of onDisk) if (!listed.includes(f)) fail(`src/shaders/${f} is not in MODULES (scripts/validate-wgsl.mjs); it would ship unvalidated`);
   for (const f of listed) if (!onDisk.includes(f)) fail(`MODULES lists ${f} but src/shaders/${f} does not exist`);
 
   // The TS that builds each module must import the same files and prelude.
+  // `composer` (optional) is the file that adds the shared parts and prelude.
   for (const consumer of new Set(MODULES.map((m) => m.consumer))) {
-    const ts = read(join(ROOT, consumer));
     const mine = MODULES.filter((m) => m.consumer === consumer);
+    const composer = mine[0].composer ?? consumer;
+    const ts = read(join(ROOT, consumer));
+    const tsShared = read(join(ROOT, composer));
     for (const m of mine) {
-      for (const file of [COMMON, `${m.name}.wgsl`]) {
-        if (!ts.includes(`shaders/${file}?raw`)) fail(`${consumer} does not import shaders/${file}?raw, but MODULES says it builds "${m.name}"`);
+      if (!ts.includes(`shaders/${m.name}.wgsl?raw`)) fail(`${consumer} does not import shaders/${m.name}.wgsl?raw, but MODULES says it builds "${m.name}"`);
+      for (const file of [COMMON, ...(m.extra ?? [])]) {
+        if (!tsShared.includes(`shaders/${file}?raw`)) fail(`${composer} does not import shaders/${file}?raw, but MODULES says "${m.name}" includes it`);
       }
     }
-    const usesGenerated = /const\s+MAX_EMITTERS\s*:\s*u32/.test(ts);
+    const usesGenerated = /const\s+MAX_EMITTERS\s*:\s*u32/.test(tsShared);
     const expectGenerated = mine.some((m) => m.generated);
     if (mine.some((m) => m.generated !== expectGenerated)) fail(`MODULES mixes generated/non-generated modules for ${consumer}; the prelude is added per file there`);
     else if (expectGenerated && !usesGenerated) fail(`${consumer} no longer prepends the MAX_EMITTERS prelude; set generated: false for ${mine.map((m) => m.name).join(', ')}`);
@@ -111,7 +133,7 @@ function checkManifest() {
 function compose(m, emitters) {
   const parts = [];
   if (m.generated) parts.push({ name: 'generated', code: generatedPrelude(emitters) });
-  parts.push({ name: COMMON, code: read(join(SHADER_DIR, COMMON)) });
+  for (const file of [COMMON, ...(m.extra ?? [])]) parts.push({ name: file, code: read(join(SHADER_DIR, file)) });
   parts.push({ name: `${m.name}.wgsl`, code: read(join(SHADER_DIR, `${m.name}.wgsl`)) });
   return { parts, code: parts.map((p) => p.code).join('\n') };
 }
@@ -201,7 +223,8 @@ try {
     const before = problems.length;
     runNaga(naga, dir, m, compose(m, emitters));
     const rel = relative(ROOT, join(SHADER_DIR, `${m.name}.wgsl`));
-    console.log(`${problems.length === before ? 'ok  ' : 'FAIL'} ${m.name.padEnd(14)} (${generatedLabel(m)}common.wgsl + ${rel})`);
+    const shared = [COMMON, ...(m.extra ?? [])].join(' + ');
+    console.log(`${problems.length === before ? 'ok  ' : 'FAIL'} ${m.name.padEnd(14)} (${generatedLabel(m)}${shared} + ${rel})`);
   }
 } finally {
   rmSync(dir, { recursive: true, force: true });

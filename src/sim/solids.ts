@@ -49,7 +49,7 @@ export interface SolidLayout {
   enabled: boolean;
   boxes: SolidBox[];
   /** Per-cell mask, `nx * ny`, row-major from the floor (`j * nx + i`). */
-  mask: Uint32Array;
+  mask: Uint32Array<ArrayBuffer>;
   /** Number of solid cells (0 when obstacles are off). */
   solidCells: number;
 }
@@ -157,7 +157,7 @@ export function rasterizeSolids(p: Params): SolidLayout {
  * Pack boxes for `environment.wgsl` `SolidDef`:
  * `a = (x0, x1, top, kind)`, `b = (cx, roofHalf, roofH, layoutIndex)`, metres.
  */
-export function packSolidDefs(boxes: readonly SolidBox[]): Float32Array {
+export function packSolidDefs(boxes: readonly SolidBox[]): Float32Array<ArrayBuffer> {
   if (boxes.length !== N_SOLIDS) {
     throw new Error(`expected ${N_SOLIDS} solids, got ${boxes.length}`);
   }
